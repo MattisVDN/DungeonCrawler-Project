@@ -1,0 +1,318 @@
+import pygame
+import math
+import sys
+from abc import ABC, abstractmethod
+
+# --- 1. SETTINGS ---
+WIDTH, HEIGHT = 800, 600
+FPS = 60
+TILE_SIZE = 40
+
+BLACK = (0, 0, 0); WHITE = (255, 255, 255); BLUE = (0, 0, 255)
+RED = (255, 0, 0); YELLOW = (255, 255, 0); GOLD = (255, 215, 0)
+TREE_GREEN = (34, 139, 34); DUNGEON_GRAY = (100, 100, 100)
+
+# --- 2. CAMERA ---
+class Camera:
+    def __init__(self):
+        self.x, self.y = 0, 0
+    def update(self, target):
+        self.x = target.x - (WIDTH // 2) + (target.width // 2)
+        self.y = target.y - (HEIGHT // 2) + (target.height // 2)
+
+# --- 3. TILES ---
+class Tile:
+    def __init__(self, x, y, tile_type):
+        self.x, self.y = x, y
+        self.rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+        self.tile_type = tile_type
+        self.image = None
+        
+        try:
+            img_map = {'dungeon': 'muur.png', 'castle': 'muur.png', 'tree': 'boom.png', 'door': 'deur.png'}
+            if tile_type in img_map:
+                self.image = pygame.transform.scale(pygame.image.load(img_map[tile_type]), (TILE_SIZE, TILE_SIZE))
+        except:
+            if tile_type == 'door': self.color = (139, 69, 19)
+            elif tile_type == 'tree': self.color = TREE_GREEN
+            else: self.color = DUNGEON_GRAY
+
+    def draw(self, surface, camera):
+        draw_rect = self.rect.move(-camera.x, -camera.y)
+        if self.image: surface.blit(self.image, draw_rect.topleft)
+        else: pygame.draw.rect(surface, getattr(self, 'color', DUNGEON_GRAY), draw_rect)
+
+class FloorTile:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+        self.rect = pygame.Rect(x, y, TILE_SIZE, TILE_SIZE)
+        try: self.image = pygame.transform.scale(pygame.image.load("vloer.png"), (TILE_SIZE, TILE_SIZE))
+        except: self.image = None
+
+    def draw(self, surface, camera):
+        draw_rect = self.rect.move(-camera.x, -camera.y)
+        if self.image: surface.blit(self.image, draw_rect.topleft)
+        else: pygame.draw.rect(surface, (40, 40, 40), draw_rect)
+
+# --- 4. ENTITIES ---
+class Entity(ABC):
+    def __init__(self, x, y, width, height, color, speed, max_health=100):
+        self.x, self.y, self.width, self.height = x, y, width, height
+        self.color, self.speed = color, speed
+        self.rect = pygame.Rect(x, y, width, height)
+        self.health = self.max_health = max_health
+
+    @abstractmethod
+    def update(self, walls, player=None): pass
+
+    def draw(self, surface, camera):
+        draw_rect = self.rect.move(-camera.x, -camera.y)
+        if hasattr(self, 'image') and self.image: surface.blit(self.image, draw_rect.topleft)
+        else: pygame.draw.rect(surface, self.color, draw_rect)
+        
+        # Healthbar
+        if 0 < self.health < self.max_health:
+            pygame.draw.rect(surface, RED, (draw_rect.x, draw_rect.y - 10, self.width, 5))
+            pygame.draw.rect(surface, (0, 255, 0), (draw_rect.x, draw_rect.y - 10, self.width * (self.health/self.max_health), 5))
+
+class Player(Entity):
+    def __init__(self, x, y):
+        super().__init__(x, y, 30, 30, BLUE, 5)
+        self.inventory = []
+        self.attack_timer = 0
+        self.image = None
+        # Basis animatie setup (optioneel)
+        self.facing = 'down'
+        self.animations = {'up': [], 'down': [], 'left': [], 'right': []}
+        try:
+            for d in ['up', 'down', 'left', 'right']:
+                for i in range(4):
+                    self.animations[d].append(pygame.transform.scale(pygame.image.load(f"{d}/{i}.png"), (30, 30)))
+            self.image = self.animations['down'][0]
+        except: pass
+
+    def attack(self, enemies):
+        self.attack_timer = 15
+        for enemy in enemies:
+            if math.hypot(self.x - enemy.x, self.y - enemy.y) < 70:
+                enemy.health -= 20
+
+    def update(self, walls, player=None):
+        if self.attack_timer > 0: self.attack_timer -= 1
+        keys = pygame.key.get_pressed()
+        
+        # FIX: Onafhankelijke X en Y Collision (Glijden langs muren)
+        dx, dy = 0, 0
+        if keys[pygame.K_LEFT]: dx = -self.speed; self.facing = 'left'
+        elif keys[pygame.K_RIGHT]: dx = self.speed; self.facing = 'right'
+        if keys[pygame.K_UP]: dy = -self.speed; self.facing = 'up'
+        elif keys[pygame.K_DOWN]: dy = self.speed; self.facing = 'down'
+
+        # Check X
+        if dx != 0:
+            old_x = self.x
+            self.x += dx
+            self.rect.x = self.x
+            for wall in walls:
+                if self.rect.colliderect(wall.rect):
+                    if wall.tile_type == 'door' and "Sleutel" in self.inventory: return "NEXT"
+                    self.x = old_x; self.rect.x = old_x
+
+        # Check Y
+        if dy != 0:
+            old_y = self.y
+            self.y += dy
+            self.rect.y = self.y
+            for wall in walls:
+                if self.rect.colliderect(wall.rect):
+                    if wall.tile_type == 'door' and "Sleutel" in self.inventory: return "NEXT"
+                    self.y = old_y; self.rect.y = old_y
+                    
+        return None
+
+class Enemy(Entity):
+    def __init__(self, x, y):
+        super().__init__(x, y, 30, 30, RED, 2, max_health=40)
+        self.attack_cooldown = 0
+    
+    def update(self, walls, player=None):
+        if self.attack_cooldown > 0: self.attack_cooldown -= 1
+        
+        if math.hypot(self.x - player.x, self.y - player.y) < 250:
+            dx = self.speed if self.x < player.x else -self.speed if self.x > player.x else 0
+            dy = self.speed if self.y < player.y else -self.speed if self.y > player.y else 0
+            
+            # FIX: Onafhankelijke X en Y Collision voor Vijanden
+            if dx != 0:
+                old_x = self.x
+                self.x += dx
+                self.rect.x = self.x
+                for w in walls:
+                    if self.rect.colliderect(w.rect): self.x = old_x; self.rect.x = old_x
+            if dy != 0:
+                old_y = self.y
+                self.y += dy
+                self.rect.y = self.y
+                for w in walls:
+                    if self.rect.colliderect(w.rect): self.y = old_y; self.rect.y = old_y
+
+        if self.rect.colliderect(player.rect) and self.attack_cooldown == 0:
+            player.health -= 15
+            self.attack_cooldown = 60
+
+class Item(Entity):
+    def __init__(self, x, y, name):
+        super().__init__(x, y, 20, 20, GOLD, 0)
+        self.name = name
+        self.picked_up = False
+    def update(self, walls, player=None):
+        if self.rect.colliderect(player.rect):
+            self.picked_up = True
+            player.inventory.append(self.name)
+
+class NPC(Entity):
+    def __init__(self, x, y):
+        super().__init__(x, y, 30, 30, YELLOW, 0)
+        self.message = "Vind de Sleutel om naar Level 2 te gaan!"
+        self.is_talking = False
+    def update(self, walls, player=None):
+        self.is_talking = math.hypot(self.x - player.x, self.y - player.y) < 60
+
+# --- 5. LEVEL INLADER ---
+ALL_LEVELS = [
+    [
+        "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+        "T00000000000000000000000000000000000000T",
+        "T00P0000T000000N000CCCCCCCCCCCCC0000000T",
+        "T000000000000000000C000000000E0C0000000T",
+        "T000T00000000000000C000011D1111C0000000T",
+        "T00TTT000000000000000000000L00010000000T", 
+        "T000T00000000000000C0000100E00010000000T",
+        "T000000000000000000C0000111111110000000T", 
+        "T000000000000000000CCCCCCCCCCCCC0000000T",
+        "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT"
+    ],
+    [
+        "1111111111111111111111111111111111111111",
+        "1000000000000010000000000000000000000001",
+        "100P00000E00001000E000011111111111000001",
+        "1000000000000010000000010000000001000001",
+        "111111000111111000E00001000000E001000001", 
+        "10000000000000000000000D0000000001000001", 
+        "1000E00000000000000000011111111111000001",
+        "1000000001111111111100000000000000000L01", 
+        "1111111111111111111111111111111111111111"
+    ]
+]
+
+def build_level(map_data, existing_player=None):
+    floors, walls, entities = [], [], []
+    player = existing_player
+    
+    for r_idx, row in enumerate(map_data):
+        for c_idx, char in enumerate(row):
+            x, y = c_idx * TILE_SIZE, r_idx * TILE_SIZE
+            
+            # Altijd een vloer onder objecten en paden
+            if char in ['0', 'P', 'E', 'L', 'N']: floors.append(FloorTile(x, y))
+            
+            if char == '1': walls.append(Tile(x, y, 'dungeon'))
+            elif char == 'C': walls.append(Tile(x, y, 'castle'))
+            elif char == 'T': walls.append(Tile(x, y, 'tree'))
+            elif char == 'D': walls.append(Tile(x, y, 'door'))
+            elif char == 'P':
+                if player is None: player = Player(x, y)
+                else: player.x, player.y = x, y; player.rect.topleft = (x, y)
+                player.start_pos = (x, y)
+            elif char == 'E': entities.append(Enemy(x, y))
+            elif char == 'N': entities.append(NPC(x, y))
+            elif char == 'L': entities.append(Item(x, y, "Sleutel"))
+
+    if player: entities.insert(0, player) # Speler bovenaan de lijst
+    return player, floors, walls, entities
+
+# --- 6. MAIN LOOP ---
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    clock = pygame.time.Clock()
+    font = pygame.font.SysFont(None, 24)
+    camera = Camera()
+
+    cur_lvl = 0
+    player, floors, walls, entities = build_level(ALL_LEVELS[cur_lvl])
+
+    running = True
+    while running:
+        # Event Loop
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT: running = False
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and player:
+                enemies = [e for e in entities if isinstance(e, Enemy)]
+                player.attack(enemies)
+
+        # Update Entities
+        for e in entities:
+            res = e.update(walls, player)
+            if res == "NEXT": 
+                cur_lvl += 1
+                if cur_lvl < len(ALL_LEVELS):
+                    player.inventory.remove("Sleutel") # Sleutel verbruikt
+                    player, floors, walls, entities = build_level(ALL_LEVELS[cur_lvl], player)
+                else: 
+                    print("GEWONNEN! Je hebt het spel uitgespeeld!"); running = False
+                break # Stop de loop voor deze frame om crash te voorkomen
+
+        # Player Respawn
+        if player and player.health <= 0:
+            player.health = 100; player.x, player.y = player.start_pos
+            player.rect.topleft = player.start_pos; player.inventory.clear()
+
+        # Camera Update
+        if player: camera.update(player)
+
+        # Verwijder dode dingen
+        entities = [e for e in entities if not (isinstance(e, Enemy) and e.health <= 0)]
+        entities = [e for e in entities if not (isinstance(e, Item) and e.picked_up)]
+
+        # Draw Fase
+        screen.fill(BLACK) # Maak scherm helemaal leeg
+        for f in floors: f.draw(screen, camera)
+        for w in walls: w.draw(screen, camera)
+        for e in entities: 
+            e.draw(screen, camera)
+            if isinstance(e, NPC) and e.is_talking:
+                msg = font.render(e.message, True, WHITE, BLACK)
+                screen.blit(msg, (10, HEIGHT - 30))
+        
+        # Zwaard Animatie (Steek in de juiste richting)
+        if player and player.attack_timer > 0:
+            p_rect = player.rect.move(-camera.x, -camera.y)
+            cx, cy = p_rect.centerx, p_rect.centery
+            
+            # Bepaal waar de punt van het zwaard moet komen
+            if player.facing == 'up':
+                end_pos = (cx, cy - 40)
+            elif player.facing == 'down':
+                end_pos = (cx, cy + 40)
+            elif player.facing == 'left':
+                end_pos = (cx - 40, cy)
+            else: # right
+                end_pos = (cx + 40, cy)
+                
+            # Teken het zwaard als een flitsende witte lijn
+            pygame.draw.line(screen, WHITE, (cx, cy), end_pos, 5)
+
+        # UI (Helemaal bovenaan getekend)
+        if player:
+            hp_txt = font.render(f"HP: {player.health}", True, RED if player.health < 30 else WHITE)
+            inv_txt = font.render(f"Inventory: {', '.join(player.inventory)}", True, GOLD)
+            screen.blit(hp_txt, (10, 10)); screen.blit(inv_txt, (10, 30))
+
+        pygame.display.flip()
+        clock.tick(FPS)
+    pygame.quit()
+    sys.exit()
+
+if __name__ == "__main__":
+    main()
