@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Mar 16 16:07:37 2026
-
-@author: VDNSpare
+entities.py (Zonder Onkwetsbaarheid, mét Knockback)
 """
 
-# entities.py
 import pygame
 import math
 import os
@@ -37,8 +34,11 @@ class Entity(pygame.sprite.Sprite):
         pygame.draw.rect(surface, GREEN, (bx, by, fill, bar_height))    
 
     def draw(self, surface, camera):
-        if self.image: surface.blit(self.image, (self.x - camera.x, self.y - camera.y))
-        else: pygame.draw.rect(surface, self.color, (self.x - camera.x, self.y - camera.y, self.width, self.height))
+        draw_pos = (self.x - camera.x, self.y - camera.y)
+        if hasattr(self, 'image') and self.image:
+            surface.blit(self.image, draw_pos)
+        else:
+            pygame.draw.rect(surface, self.color, (*draw_pos, self.width, self.height))
 
 class Player(Entity):
     def __init__(self, x, y):
@@ -60,31 +60,54 @@ class Player(Entity):
             if self.animations['down']: self.image = self.animations['down'][0] 
         except: self.image = None
 
-    def take_damage(self, amount): self.health -= amount
+    def take_damage(self, amount): 
+        # Geen I-frames meer, gewoon rauw incasseren!
+        self.health -= amount
 
     def attack(self, enemies):
         self.attack_timer = 15 
         for enemy in enemies:
             dist = math.hypot(self.x - enemy.x, self.y - enemy.y)
-            if dist < 80: enemy.health -= 15 
+            if dist < 90: 
+                enemy.health -= 20 
+                # KNOCKBACK: Sla de goblin een stukje achteruit
+                if self.facing == 'left': enemy.x -= 40
+                elif self.facing == 'right': enemy.x += 40
+                elif self.facing == 'up': enemy.y -= 40
+                elif self.facing == 'down': enemy.y += 40
 
     def update(self, walls: list, player=None):
         if self.attack_timer > 0: self.attack_timer -= 1
         keys = pygame.key.get_pressed()
-        old_x, old_y = self.x, self.y
         self.is_moving = False 
 
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]: self.x -= self.speed; self.facing = 'left'; self.is_moving = True
-        elif keys[pygame.K_RIGHT] or keys[pygame.K_d]: self.x += self.speed; self.facing = 'right'; self.is_moving = True
-        if keys[pygame.K_UP] or keys[pygame.K_w]: self.y -= self.speed; self.facing = 'up'; self.is_moving = True
-        elif keys[pygame.K_DOWN] or keys[pygame.K_s]: self.y += self.speed; self.facing = 'down'; self.is_moving = True
+        dx, dy = 0, 0
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]: dx = -self.speed; self.facing = 'left'; self.is_moving = True
+        elif keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx = self.speed; self.facing = 'right'; self.is_moving = True
+        if keys[pygame.K_UP] or keys[pygame.K_w]: dy = -self.speed; self.facing = 'up'; self.is_moving = True
+        elif keys[pygame.K_DOWN] or keys[pygame.K_s]: dy = self.speed; self.facing = 'down'; self.is_moving = True
 
-        self.rect.topleft = (self.x, self.y)
-        for wall in walls:
-            if self.rect.colliderect(wall.rect):
-                self.x, self.y = old_x, old_y
-                self.rect.topleft = (self.x, self.y)
+        # Check X botsing (Met vergevingsgezindere hitbox om door gangen te passen)
+        if dx != 0:
+            self.x += dx
+            self.rect.topleft = (self.x, self.y)
+            hitbox = self.rect.inflate(-15, -15)
+            for wall in walls:
+                if hitbox.colliderect(wall.rect):
+                    self.x -= dx
+                    self.rect.topleft = (self.x, self.y)
 
+        # Check Y botsing
+        if dy != 0:
+            self.y += dy
+            self.rect.topleft = (self.x, self.y)
+            hitbox = self.rect.inflate(-15, -15)
+            for wall in walls:
+                if hitbox.colliderect(wall.rect):
+                    self.y -= dy
+                    self.rect.topleft = (self.x, self.y)
+
+        # Animaties updaten
         if self.is_moving:
             self.frame_index += self.animation_speed
             if self.frame_index >= len(self.animations[self.facing]): self.frame_index = 0.0
@@ -96,12 +119,14 @@ class Player(Entity):
         super().draw(surface, camera)
         self.draw_health_bar(surface, camera) 
         draw_rect = self.rect.move(-camera.x, -camera.y)
+        # Zwaard tekenen
         if self.attack_timer > 0:
             cx, cy = draw_rect.center 
-            if self.facing == 'up': pygame.draw.arc(surface, WHITE, (cx - 25, cy - 35, 50, 50), 0, math.pi, 4)
-            elif self.facing == 'down': pygame.draw.arc(surface, WHITE, (cx - 25, cy - 15, 50, 50), math.pi, 2 * math.pi, 4)
-            elif self.facing == 'left': pygame.draw.arc(surface, WHITE, (cx - 35, cy - 25, 50, 50), math.pi / 2, 1.5 * math.pi, 4)
-            elif self.facing == 'right': pygame.draw.arc(surface, WHITE, (cx - 15, cy - 25, 50, 50), -math.pi / 2, math.pi / 2, 4)
+            if self.facing == 'up': end_pos = (cx, cy - 40)
+            elif self.facing == 'down': end_pos = (cx, cy + 40)
+            elif self.facing == 'left': end_pos = (cx - 40, cy)
+            else: end_pos = (cx + 40, cy)
+            pygame.draw.line(surface, WHITE, (cx, cy), end_pos, 6)
 
 class Enemy(Entity):
     def __init__(self, x, y):
@@ -178,13 +203,11 @@ class Enemy(Entity):
 
 class NPC(Entity):
     def __init__(self, x, y):
-        # We maken de tovenaar donkerpaars als er geen plaatje is
         super().__init__(x, y, 40, 40, (128, 0, 128), 0, max_health=100)
         self.quest_state = 'start'
         self.message = ""
         self.talk_timer = 0 
         
-        # TOVENAAR PLAATJE INLADEN
         try:
             if os.path.exists("wizard.png"):
                 img = pygame.image.load("wizard.png")
