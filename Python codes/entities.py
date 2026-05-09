@@ -62,7 +62,8 @@ class Entity(pygame.sprite.Sprite):
         self.rect.topleft = (x, y)
         self.attack_timer = 0
 
-    def move_and_collide(self, dx, dy, walls):
+    # FIX: entities=None toegevoegd
+    def move_and_collide(self, dx, dy, walls, entities=None):
         if dx != 0:
             self.x += dx
             self.rect.topleft = (self.x, self.y)
@@ -70,6 +71,17 @@ class Entity(pygame.sprite.Sprite):
             for wall in walls:
                 if hitbox.colliderect(wall.rect):
                     self.x -= dx; self.rect.topleft = (self.x, self.y); break
+            if entities:
+                for e in entities:
+                    if isinstance(e, PushableRock) and hitbox.colliderect(e.rect):
+                        e.x += dx # Duw de rots!
+                        e.rect.topleft = (e.x, e.y)
+                        # Check of de rots nu niet in een muur zit
+                        for w in walls:
+                            if e.rect.colliderect(w.rect):
+                                e.x -= dx; e.rect.topleft = (e.x, e.y) # Rots zit vast
+                                self.x -= dx; self.rect.topleft = (self.x, self.y) # Speler zit vast
+                                break
         if dy != 0:
             self.y += dy
             self.rect.topleft = (self.x, self.y)
@@ -77,6 +89,17 @@ class Entity(pygame.sprite.Sprite):
             for wall in walls:
                 if hitbox.colliderect(wall.rect):
                     self.y -= dy; self.rect.topleft = (self.x, self.y); break
+            if entities:
+                for e in entities:
+                    if isinstance(e, PushableRock) and hitbox.colliderect(e.rect):
+                        e.y += dy # Duw de rots!
+                        e.rect.topleft = (e.x, e.y)
+                        # Check of de rots nu niet in een muur zit
+                        for w in walls:
+                            if e.rect.colliderect(w.rect):
+                                e.y -= dy; e.rect.topleft = (e.x, e.y)
+                                self.y -= dy; self.rect.topleft = (self.x, self.y)
+                                break
 
     def draw_health_bar(self, surface, camera, offset_y=-12):
         bar_width = self.width
@@ -157,7 +180,8 @@ class Player(Entity):
                         enemy.rect.topleft = (enemy.x, enemy.y)
                         break 
 
-    def update(self, walls: list, player=None):
+    # FIX: entities=None toegevoegd
+    def update(self, walls: list, player=None, entities=None):
         if self.attack_timer > 0: self.attack_timer -= 1
         if self.spell_cooldown > 0: self.spell_cooldown -= 1
         
@@ -175,7 +199,7 @@ class Player(Entity):
             if keys[pygame.K_UP] or keys[pygame.K_w]: dy = -self.speed; self.facing = 'up'; self.is_moving = True
             elif keys[pygame.K_DOWN] or keys[pygame.K_s]: dy = self.speed; self.facing = 'down'; self.is_moving = True
 
-        self.move_and_collide(dx, dy, walls)
+        self.move_and_collide(dx, dy, walls, entities)
 
         if self.is_moving:
             self.frame_index += self.animation_speed
@@ -247,6 +271,7 @@ class Enemy(Entity):
         except: self.image = None
 
     def update(self, walls, player=None):
+        # FIX: "fe" typefoutje verwijderd
         if self.health <= 0:
             self.current_anim_state = 'death'
             if self.animations['death']:
@@ -265,18 +290,15 @@ class Enemy(Entity):
         is_moving = False
         dist = math.hypot(self.x - player.x, self.y - player.y) if player else 999
         
-        # --- NIEUW: LINE OF SIGHT (Zichtlijn) ---
         can_see_player = False
-        if dist < 300: # De speler is dichtbij genoeg
+        if dist < 300: 
             can_see_player = True
             for wall in walls:
-                # Trek een laserstraal tussen monster en speler
                 if wall.rect.clipline(self.rect.center, player.rect.center):
-                    can_see_player = False # Muur in de weg!
+                    can_see_player = False 
                     break
                     
         ai_state = 'chase' if can_see_player else 'patrol'
-     
 
         if ai_state == 'chase' and self.attack_timer == 0:
             is_moving = True
@@ -549,7 +571,6 @@ class Potion(Entity):
     def update(self, walls=None, player=None):
         if player and self.rect.colliderect(player.rect) and not self.is_picked_up:
             if player.health < player.max_health:
-                # Bereken hoeveel we echt genezen
                 heal_amount = 30
                 player.health = min(player.max_health, player.health + heal_amount)
                 self.spawn_heal_text = True 
@@ -572,10 +593,16 @@ class Trap(Entity):
         if self.timer >= self.switch_time:
             self.timer = 0; self.is_active = not self.is_active 
             self.image = self.image_active if self.is_active else self.image_safe
+            
         if self.damage_cooldown > 0: self.damage_cooldown -= 1
-        if self.is_active and player and self.rect.colliderect(player.rect) and self.damage_cooldown == 0:
-            player.take_damage(20); self.damage_cooldown = 60
-
+        
+        if self.is_active and player:
+            trap_hitbox = self.rect.inflate(-20, -20) 
+            
+            if trap_hitbox.colliderect(player.rect) and self.damage_cooldown == 0:
+                if not getattr(player, 'is_invincible', False):
+                    player.take_damage(20); self.damage_cooldown = 60
+                    
 class Fireball(Entity):
     def __init__(self, x, y, facing):
         super().__init__(x, y, 20, 20, (255, 100, 0), 12, 1) 
@@ -626,3 +653,36 @@ class DamageText(Entity):
         # Teken de gekleurde tekst in het midden
         surface.blit(text_surf, (draw_x, draw_y))
             
+class PushableRock(Entity):
+    def __init__(self, x, y):
+        # Een grote zware bruine vierkante steen
+        super().__init__(x, y, 46, 46, (139, 69, 19), speed=0, max_health=999) 
+        self.image = pygame.Surface((46, 46))
+        self.image.fill((100, 70, 40))
+        pygame.draw.rect(self.image, (60, 40, 20), (0, 0, 46, 46), 4) # Donker randje
+        # Extra lijnen zodat het op een rots lijkt
+        pygame.draw.line(self.image, (60, 40, 20), (10, 10), (36, 36), 3)
+        pygame.draw.line(self.image, (60, 40, 20), (36, 10), (10, 36), 3)
+
+    def update(self, walls=None, player=None):
+        pass # De logica zit bij de speler die hem duwt
+
+class PressurePlate(Entity):
+    def __init__(self, x, y):
+        super().__init__(x, y, 36, 36, (150, 150, 150), speed=0, max_health=999)
+        self.is_pressed = False
+        
+        # Plaatje als hij NIET is ingedrukt
+        self.image_up = pygame.Surface((36, 36))
+        self.image_up.fill((100, 100, 100))
+        pygame.draw.rect(self.image_up, (200, 200, 200), (4, 4, 28, 28))
+        
+        # Plaatje als hij WEL is ingedrukt (zakt in de vloer)
+        self.image_down = pygame.Surface((36, 36))
+        self.image_down.fill((80, 80, 80))
+        pygame.draw.rect(self.image_down, (100, 255, 100), (8, 8, 20, 20)) # Groen lampje!
+        
+        self.image = self.image_up
+
+    def update(self, walls=None, player=None):
+        pass # Wordt geregeld in main.py
