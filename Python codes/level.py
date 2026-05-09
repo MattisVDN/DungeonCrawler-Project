@@ -84,31 +84,39 @@ class FloorTile(pygame.sprite.Sprite):
         
        
 
-def genereer_random_kerker(breedte=50, hoogte=30, stappen=1500):
-    """AI Algoritme om een ruimere, gevarieerde random kerker te genereren met een Safe Zone."""
-    # 1. Vul de hele kaart met massieve muren ('1')
-    grid = [['1' for _ in range(breedte)] for _ in range(hoogte)]
+WITTE_ORC_ARENA = [
+    "C1111111111111111111111111111111111111111111111111111111111C",
+    "110000000000000000000000000000000000000000000000000000000011",
+    "110000000000000000000000000000000000000000000000000000000011",
+    "110000000000S000000000000000000000000000000S0000000000000011",
+    "11000000000SSS0000000000000000000000000000SSS000000000000011",
+    "110000000000S0000000000000W0000000000000000S0000000000000011",
+    "110000000000000000000000000000000000000000000000000000000011",
+    "110000000000000000000000000000000000000000000000000000000011",
+    "110000000000S000000000000000000000000000000S0000000000000011",
+    "11000000000SSS0000000000000000000000000000SSS000000000000011",
+    "110000000000S0000000000000P0000000000000000S0000000000000011",
+    "110000000000000000000000000000000000000000000000000000000011",
+    "C1111111111111111111111111DD1111111111111111111111111111111C"
+]
 
-    # 2. Bepaal het startpunt (Speler)
+def genereer_random_kerker(breedte=50, hoogte=30, stappen=1500):
+    # 15% KANS DAT DIT DE ULTIEME EINDBAAS MAP IS!
+    if random.random() < 0.15:
+        return WITTE_ORC_ARENA
+
+    grid = [['1' for _ in range(breedte)] for _ in range(hoogte)]
     px, py = breedte // 2, hoogte // 2
     grid[py][px] = 'P' 
-    
-    # Hou bij welke vakjes we hebben uitgegraven
     uitgegraven = [(px, py)]
     x, y = px, py
 
-    # 3. Dronken Graafmachine (Nu met een bredere boor!)
     for _ in range(stappen):
-        # Kies een richting
         richting = random.choice([(0, -1), (0, 1), (-1, 0), (1, 0)])
         x += richting[0]
         y += richting[1]
-
-        # Zorg dat we goed uit de buurt van de buitenste rand blijven
         x = max(2, min(breedte - 3, x))
         y = max(2, min(hoogte - 3, y))
-
-        # Graaf niet alleen dít vakje, maar willekeurig ook een vakje ernaast uit (Maakt grote ruimtes!)
         for dx in [0, random.choice([-1, 1])]:
             for dy in [0, random.choice([-1, 1])]:
                 nx, ny = x + dx, y + dy
@@ -116,22 +124,18 @@ def genereer_random_kerker(breedte=50, hoogte=30, stappen=1500):
                     grid[ny][nx] = ' '
                     uitgegraven.append((nx, ny))
 
-    # 4. De allerlaatste stap van de machine maken we de Uitgang
     laatste_x, laatste_y = uitgegraven[-1]
     grid[laatste_y][laatste_x] = 'X'
 
-    # 5. Spawnen met SAFE ZONES (Afstand berekenen!)
     aantal_goblins = random.randint(8, 15)
     for _ in range(aantal_goblins):
         rx, ry = random.choice(uitgegraven)
-        # Check: Is de goblin minimaal 8 blokjes weg van de speler (px, py)?
         if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 8: 
             grid[ry][rx] = 'E'
             
     aantal_vallen = random.randint(6, 12)
     for _ in range(aantal_vallen):
         rx, ry = random.choice(uitgegraven)
-        # Vallen mogen iets dichterbij, maar nog steeds niet óp de speler (minimaal 4 blokjes)
         if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 4: 
             grid[ry][rx] = 'S'
             
@@ -140,12 +144,10 @@ def genereer_random_kerker(breedte=50, hoogte=30, stappen=1500):
         rx, ry = random.choice(uitgegraven)
         if grid[ry][rx] == ' ': grid[ry][rx] = 'H'
 
-    # 6. Variatie: 25% kans op een verrassings-Boss in de eindeloze modus!
+    # 25% KANS DAT DE ORC GENERAAL GEWOON RONDLOOPT IN DEZE DUNGEON!
     if random.random() < 0.25:
         rx, ry = random.choice(uitgegraven)
-        # Een baas moet ECHT ver weg spawnen (minimaal 12 blokjes)
         if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 12: 
-            grid[ry][rx] = 'B'
+            grid[ry][rx] = 'B' # 'B' is the Orc Generaal
 
-    # 7. Zet ons grid om naar de lijst met strings zoals ALL_LEVELS ze kent
     return ["".join(rij) for rij in grid]        
