@@ -62,7 +62,6 @@ class Entity(pygame.sprite.Sprite):
         self.rect.topleft = (x, y)
         self.attack_timer = 0
 
-    # FIX: entities=None toegevoegd
     def move_and_collide(self, dx, dy, walls, entities=None):
         if dx != 0:
             self.x += dx
@@ -74,14 +73,7 @@ class Entity(pygame.sprite.Sprite):
             if entities:
                 for e in entities:
                     if isinstance(e, PushableRock) and hitbox.colliderect(e.rect):
-                        e.x += dx # Duw de rots!
-                        e.rect.topleft = (e.x, e.y)
-                        # Check of de rots nu niet in een muur zit
-                        for w in walls:
-                            if e.rect.colliderect(w.rect):
-                                e.x -= dx; e.rect.topleft = (e.x, e.y) # Rots zit vast
-                                self.x -= dx; self.rect.topleft = (self.x, self.y) # Speler zit vast
-                                break
+                        self.x -= dx; self.rect.topleft = (self.x, self.y); break
         if dy != 0:
             self.y += dy
             self.rect.topleft = (self.x, self.y)
@@ -92,14 +84,7 @@ class Entity(pygame.sprite.Sprite):
             if entities:
                 for e in entities:
                     if isinstance(e, PushableRock) and hitbox.colliderect(e.rect):
-                        e.y += dy # Duw de rots!
-                        e.rect.topleft = (e.x, e.y)
-                        # Check of de rots nu niet in een muur zit
-                        for w in walls:
-                            if e.rect.colliderect(w.rect):
-                                e.y -= dy; e.rect.topleft = (e.x, e.y)
-                                self.y -= dy; self.rect.topleft = (self.x, self.y)
-                                break
+                        self.y -= dy; self.rect.topleft = (self.x, self.y); break
 
     def draw_health_bar(self, surface, camera, offset_y=-12):
         bar_width = self.width
@@ -180,7 +165,6 @@ class Player(Entity):
                         enemy.rect.topleft = (enemy.x, enemy.y)
                         break 
 
-    # FIX: entities=None toegevoegd
     def update(self, walls: list, player=None, entities=None):
         if self.attack_timer > 0: self.attack_timer -= 1
         if self.spell_cooldown > 0: self.spell_cooldown -= 1
@@ -188,9 +172,49 @@ class Player(Entity):
         keys = pygame.key.get_pressed()
         self.is_moving = False 
 
-        if keys[pygame.K_LSHIFT] and "Schild" in self.inventory:
+        is_grabbing = False
+        grabbed_rock = None
+        
+        if keys[pygame.K_e] and entities: 
+            check_rect = self.rect.copy()
+            if self.facing == 'up': check_rect.y -= 15
+            elif self.facing == 'down': check_rect.y += 15
+            elif self.facing == 'left': check_rect.x -= 15
+            elif self.facing == 'right': check_rect.x += 15
+            
+            for e in entities:
+                if isinstance(e, PushableRock) and check_rect.colliderect(e.rect):
+                    is_grabbing = True
+                    grabbed_rock = e
+                    break
+
+        if is_grabbing:
+            dx, dy = 0, 0
+            loopsnelheid = self.speed * 0.6 
+            
+            if self.facing in ['left', 'right']:
+                if keys[pygame.K_LEFT] or keys[pygame.K_a]: dx = -loopsnelheid
+                elif keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx = loopsnelheid
+            elif self.facing in ['up', 'down']:
+                if keys[pygame.K_UP] or keys[pygame.K_w]: dy = -loopsnelheid
+                elif keys[pygame.K_DOWN] or keys[pygame.K_s]: dy = loopsnelheid
+                
+            if dx != 0 or dy != 0:
+                self.is_moving = True
+                duw_geslaagd = grabbed_rock.move_rock(dx, dy, walls, player=self)
+                if duw_geslaagd:
+                    self.x += dx; self.y += dy
+                    self.rect.topleft = (self.x, self.y)
+                    hitbox = self.rect.inflate(-15, -15)
+                    for w in walls:
+                        if hitbox.colliderect(w.rect):
+                            self.x -= dx; self.y -= dy
+                            self.rect.topleft = (self.x, self.y)
+                            grabbed_rock.move_rock(-dx, -dy, walls, player=self) 
+                            break
+
+        elif keys[pygame.K_LSHIFT] and "Schild" in self.inventory:
             self.is_blocking = True
-            dx, dy = 0, 0 
         else:
             self.is_blocking = False
             dx, dy = 0, 0
@@ -198,8 +222,8 @@ class Player(Entity):
             elif keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx = self.speed; self.facing = 'right'; self.is_moving = True
             if keys[pygame.K_UP] or keys[pygame.K_w]: dy = -self.speed; self.facing = 'up'; self.is_moving = True
             elif keys[pygame.K_DOWN] or keys[pygame.K_s]: dy = self.speed; self.facing = 'down'; self.is_moving = True
-
-        self.move_and_collide(dx, dy, walls, entities)
+            
+            self.move_and_collide(dx, dy, walls, entities)
 
         if self.is_moving:
             self.frame_index += self.animation_speed
@@ -271,7 +295,6 @@ class Enemy(Entity):
         except: self.image = None
 
     def update(self, walls, player=None):
-        # FIX: "fe" typefoutje verwijderd
         if self.health <= 0:
             self.current_anim_state = 'death'
             if self.animations['death']:
@@ -622,67 +645,118 @@ class Fireball(Entity):
 
 class DamageText(Entity):
     def __init__(self, x, y, text, color):
-        super().__init__(x, y, 0, 0, color, 1, 1) # Onzichtbare body
+        super().__init__(x, y, 0, 0, color, 1, 1)
         self.text = text
         self.color = color
-        self.timer = 45 # Blijft 0.75 seconde op het scherm (60 FPS * 0.75)
+        self.timer = 45
         self.is_removable = False
         self.font = pygame.font.Font(None, 36)
-        
-        # Geef het getalletje een kleine random positie zodat meerdere klappen niet overlappen
         self.x += random.randint(-15, 15)
         self.y += random.randint(-10, 10)
 
     def update(self, walls=None, player=None):
-        self.y -= 1.5 # Zweef langzaam omhoog!
+        self.y -= 1.5 
         self.timer -= 1
         if self.timer <= 0:
             self.is_removable = True
 
     def draw(self, surface, camera):
         text_surf = self.font.render(self.text, True, self.color)
-        outline_surf = self.font.render(self.text, True, (0, 0, 0)) # Zwart randje voor leesbaarheid
-        
+        outline_surf = self.font.render(self.text, True, (0, 0, 0)) 
         draw_x = self.x - camera.x
         draw_y = self.y - camera.y
-        
-        # Teken 4x de zwarte outline
         for dx, dy in [(-1,-1), (1,-1), (-1,1), (1,1)]:
             surface.blit(outline_surf, (draw_x + dx, draw_y + dy))
-        
-        # Teken de gekleurde tekst in het midden
         surface.blit(text_surf, (draw_x, draw_y))
             
 class PushableRock(Entity):
     def __init__(self, x, y):
-        # Een grote zware bruine vierkante steen
-        super().__init__(x, y, 46, 46, (139, 69, 19), speed=0, max_health=999) 
-        self.image = pygame.Surface((46, 46))
-        self.image.fill((100, 70, 40))
-        pygame.draw.rect(self.image, (60, 40, 20), (0, 0, 46, 46), 4) # Donker randje
-        # Extra lijnen zodat het op een rots lijkt
-        pygame.draw.line(self.image, (60, 40, 20), (10, 10), (36, 36), 3)
-        pygame.draw.line(self.image, (60, 40, 20), (36, 10), (10, 36), 3)
+        super().__init__(x, y, 44, 44, (139, 69, 19), speed=0, max_health=999) 
+        try:
+            pad = os.path.join(PNG_DIR, "Different PNG", "rots.png")
+            if os.path.exists(pad):
+                img = pygame.image.load(pad).convert_alpha()
+                self.image = pygame.transform.scale(img, (self.width, self.height))
+            else: raise Exception("No PNG")
+        except:
+            self.image = pygame.Surface((44, 44), pygame.SRCALPHA)
+            pygame.draw.circle(self.image, (120, 120, 120), (22, 22), 20) 
+            pygame.draw.circle(self.image, (80, 80, 80), (22, 22), 20, 4) 
+            pygame.draw.circle(self.image, (180, 180, 180), (12, 12), 6)  
 
-    def update(self, walls=None, player=None):
-        pass # De logica zit bij de speler die hem duwt
+    def update(self, walls=None, player=None, entities=None):
+        pass 
+
+    def move_rock(self, dx, dy, walls, player=None):
+        oude_x, oude_y = self.x, self.y
+        self.x += dx
+        self.y += dy
+        self.rect.topleft = (self.x, self.y)
+        
+        hitbox = self.rect.inflate(-4, -4) 
+        for wall in walls:
+            if hitbox.colliderect(wall.rect):
+                self.x, self.y = oude_x, oude_y
+                self.rect.topleft = (self.x, self.y)
+                return False
+        
+        if player and hasattr(player, 'current_doors'):
+            door_rects = [d.rect for d in player.current_doors]
+            for door_rect in door_rects:
+                if self.rect.colliderect(door_rect):
+                    self.x, self.y = oude_x, oude_y
+                    self.rect.topleft = (self.x, self.y)
+                    return False
+        return True
 
 class PressurePlate(Entity):
     def __init__(self, x, y):
-        super().__init__(x, y, 36, 36, (150, 150, 150), speed=0, max_health=999)
+        super().__init__(x, y, 40, 40, (150, 150, 150), speed=0, max_health=999)
         self.is_pressed = False
-        
-        # Plaatje als hij NIET is ingedrukt
-        self.image_up = pygame.Surface((36, 36))
-        self.image_up.fill((100, 100, 100))
-        pygame.draw.rect(self.image_up, (200, 200, 200), (4, 4, 28, 28))
-        
-        # Plaatje als hij WEL is ingedrukt (zakt in de vloer)
-        self.image_down = pygame.Surface((36, 36))
-        self.image_down.fill((80, 80, 80))
-        pygame.draw.rect(self.image_down, (100, 255, 100), (8, 8, 20, 20)) # Groen lampje!
+        self.image_up, self.image_down = None, None
+        try:
+            pad = os.path.join(PNG_DIR, "Different PNG", "plaat_op.png")
+            if os.path.exists(pad):
+                img = pygame.image.load(pad).convert_alpha()
+                self.image_up = pygame.transform.scale(img, (40, 40))
+            else: raise Exception("No PNG")
+        except:
+            self.image_up = pygame.Surface((40, 40), pygame.SRCALPHA)
+            pygame.draw.rect(self.image_up, (80, 80, 80), (0, 0, 40, 40))
+            pygame.draw.rect(self.image_up, (200, 200, 200), (6, 6, 28, 28))
+            
+        try:
+            pad = os.path.join(PNG_DIR, "Different PNG", "plaat_neer.png")
+            if os.path.exists(pad):
+                img = pygame.image.load(pad).convert_alpha()
+                self.image_down = pygame.transform.scale(img, (40, 40))
+            else: raise Exception("No PNG")
+        except:
+            self.image_down = pygame.Surface((40, 40), pygame.SRCALPHA)
+            pygame.draw.rect(self.image_down, (50, 50, 50), (0, 0, 40, 40))
+            pygame.draw.rect(self.image_down, (100, 255, 100), (10, 10, 20, 20)) 
+            pygame.draw.rect(self.image_down, (20, 100, 20), (10, 10, 20, 20), 2)
         
         self.image = self.image_up
 
+    def update(self, walls=None, player=None, entities=None):
+        pass
+
+class Torch(Entity):
+    def __init__(self, x, y):
+        super().__init__(x, y, 30, 40, (139, 69, 19), speed=0, max_health=999)
+        self.is_lit = False
+        
+        self.image_off = pygame.Surface((30, 40), pygame.SRCALPHA)
+        pygame.draw.rect(self.image_off, (100, 50, 20), (10, 10, 10, 30)) 
+        pygame.draw.circle(self.image_off, (50, 50, 50), (15, 10), 8) 
+        
+        self.image_on = pygame.Surface((30, 40), pygame.SRCALPHA)
+        pygame.draw.rect(self.image_on, (100, 50, 20), (10, 10, 10, 30))
+        pygame.draw.circle(self.image_on, (255, 100, 0), (15, 10), 12) 
+        pygame.draw.circle(self.image_on, (255, 255, 0), (15, 10), 6)  
+        
+        self.image = self.image_off
+
     def update(self, walls=None, player=None):
-        pass # Wordt geregeld in main.py
+        self.image = self.image_on if self.is_lit else self.image_off

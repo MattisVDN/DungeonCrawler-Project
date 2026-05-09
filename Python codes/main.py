@@ -5,8 +5,7 @@ import math
 import random
 from settings import WIDTH, HEIGHT, FPS, TILE_SIZE, BLACK, WHITE, RED, YELLOW, GREEN
 from camera import Camera
-# LET OP: PushableRock en PressurePlate zijn hier nu toegevoegd!
-from entities import Player, Enemy, NPC, Item, Potion, Boss, Trap, Fireball, DamageText, PushableRock, PressurePlate
+from entities import Player, Enemy, NPC, Item, Potion, Boss, Trap, Fireball, DamageText, PushableRock, PressurePlate, Torch 
 from level import Tile, FloorTile, genereer_random_kerker
 from level import ALL_LEVELS  
 
@@ -52,9 +51,9 @@ def load_level(level_index, persistent_player=None):
             elif char == 'M': entities.append(Item(x, y, "Vuurboek"))
             elif char == 'S': entities.append(Trap(x, y))
             elif char == 'B': entities.append(Boss(x, y))
-            # --- NIEUW: HIER WORDEN DE ROTS EN PLAAT IN DE WERELD GEZET ---
             elif char == 'R': entities.append(PushableRock(x, y))
             elif char == 'V': entities.append(PressurePlate(x, y))
+            elif char == 'F': entities.append(Torch(x, y)) 
             
     return floors, walls, entities, player, exit_tiles
 
@@ -86,7 +85,7 @@ def draw_ui(screen, player, current_level_index, current_wave, living_enemies, f
     
     start_y = 170 
     screen.blit(font_hud.render("[SPATIE] Slaan", True, WHITE), (WIDTH - 150, start_y))
-    screen.blit(font_hud.render("[E] Interactie", True, WHITE), (WIDTH - 150, start_y + 20))
+    screen.blit(font_hud.render("[E] Interactie / Trekken", True, WHITE), (WIDTH - 150, start_y + 20))
     
     if "Schild" in player.inventory: 
         screen.blit(font_hud.render("[SHIFT] Blocken", True, (0, 191, 255)), (WIDTH - 150, start_y + 40))
@@ -114,7 +113,7 @@ def draw_ui(screen, player, current_level_index, current_wave, living_enemies, f
                     screen.blit(boss_text, (bx + (bar_width // 2) - (boss_text.get_width() // 2), by - 20))
                     break
 
-def draw_fog_of_war(screen, player, camera):
+def draw_fog_of_war(screen, player, camera, entities=None):
     fog = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     fog.fill((10, 10, 20, 245)) 
     
@@ -137,7 +136,19 @@ def draw_fog_of_war(screen, player, camera):
             pygame.draw.circle(light, (255, 255, 255, alpha), (light_radius, light_radius), current_radius)
         
         fog.blit(light, (cx - light_radius, cy - light_radius), special_flags=pygame.BLEND_RGBA_MIN)
-        
+        if entities:
+            for e in entities:
+                if isinstance(e, Torch) and e.is_lit:
+                    tcx = int(e.x - camera.x + e.width // 2)
+                    tcy = int(e.y - camera.y + e.height // 2)
+                    torch_radius = 150 + flicker 
+                    t_light = pygame.Surface((torch_radius * 2, torch_radius * 2), pygame.SRCALPHA)
+                    t_light.fill((255, 255, 255, 255))
+                    for i in range(20):
+                        cr = int(torch_radius - (i * (torch_radius / 20)))
+                        al = int(255 - (i / 20) * 255)
+                        pygame.draw.circle(t_light, (255, 200, 100, al), (torch_radius, torch_radius), cr)
+                    fog.blit(t_light, (tcx - torch_radius, tcy - torch_radius), special_flags=pygame.BLEND_RGBA_MIN)        
     screen.blit(fog, (0, 0))
 
 def draw_minimap(screen, player, walls, entities, exit_tiles):
@@ -192,7 +203,7 @@ def main():
     
     camera = Camera()
     
-    # --- START BIJ JOUW NIEUWE LEVEL 4 (Index 3) ---
+    # We starten op index 3 (level_4) om te testen. Pas dit aan naar 0 als je van voor af aan wil spelen!
     current_level_index, current_wave = 3, 1 
     floors, walls, entities, player, exit_tiles = load_level(current_level_index)
 
@@ -240,28 +251,74 @@ def main():
                     elif event.key == pygame.K_e:
                         interact_rect = player.rect.inflate(40, 40) 
                         for entity in entities:
-                            if entity != player and interact_rect.colliderect(entity.rect):
+                            if entity != player and not isinstance(entity, PushableRock) and interact_rect.colliderect(entity.rect):
                                 if isinstance(entity, (NPC, Item)): entity.interact(player)
 
         if game_state == "PLAYING":
-            # --- PUZZEL LOGICA ---
+            
+            # --- FAKKELS LOGICA ---
+            torches = [e for e in entities if isinstance(e, Torch)]
+            fireballs = [e for e in entities if isinstance(e, Fireball)]
+            
+            for torch in torches:
+                if not torch.is_lit:
+                    for fb in fireballs:
+                        if fb.rect.colliderect(torch.rect):
+                            torch.is_lit = True
+                            fb.is_removable = True 
+                            camera.trigger_shake(5, 3)
+            
+            # Check of we ALLE fakkels in de kamer hebben aangestoken
+            if torches and all(t.is_lit for t in torches):
+                if not getattr(torches[0], 'doors_opened', False): 
+                    camera.trigger_shake(15, 10)
+                    walls = [w for w in walls if w.tile_type != 'door']
+                    torches[0].doors_opened = True
+
+            # --- ROTS EN PLAAT LOGICA ---
             rocks = [e for e in entities if isinstance(e, PushableRock)]
             plates = [e for e in entities if isinstance(e, PressurePlate)]
             
+            platen_ingedrukt = 0
+            
             for plate in plates:
-                was_pressed = plate.is_pressed
-                plate.is_pressed = False
-                
+                rock_on_plate = False
                 for rock in rocks:
                     if plate.rect.collidepoint(rock.rect.center):
-                        plate.is_pressed = True
+                        rock_on_plate = True; break
                 
+                was_pressed = plate.is_pressed
+                plate.is_pressed = rock_on_plate
                 plate.image = plate.image_down if plate.is_pressed else plate.image_up
                 
-                if plate.is_pressed and not was_pressed:
-                    camera.trigger_shake(10, 5)
+                if plate.is_pressed:
+                    platen_ingedrukt += 1
+                
+                if plate.is_pressed and not was_pressed: 
+                    camera.trigger_shake(8, 4)
+                elif not plate.is_pressed and was_pressed: 
+                    camera.trigger_shake(4, 2)
+
+            # --- DEUREN BEHEREN ---
+            if plates:
+                should_open_poort = (platen_ingedrukt == len(plates))
+                poort_is_open = not any(w.tile_type == 'door' for w in walls)
+                
+                if should_open_poort and not poort_is_open:
                     walls = [w for w in walls if w.tile_type != 'door']
-            
+                    camera.trigger_shake(15, 10)
+                    
+                elif not should_open_poort and poort_is_open:
+                    if player and hasattr(player, 'current_doors'):
+                        for door in player.current_doors:
+                             if door not in walls: walls.append(door)
+                        camera.trigger_shake(10, 8)
+                        
+            if not getattr(player, 'doors_saved', False) and player:
+                player.current_doors = [w for w in walls if w.tile_type == 'door']
+                player.doors_saved = True
+                
+            # --- ENTITEITEN UPDATEN ---
             if player and player.health <= 0: game_state = "GAMEOVER"
             else:
                 oude_player_hp = player.health if player else 0
@@ -325,7 +382,7 @@ def main():
             for wall in walls: wall.draw(screen, camera)
             for entity in entities: entity.draw(screen, camera)
             if player:
-                draw_fog_of_war(screen, player, camera)
+                draw_fog_of_war(screen, player, camera, entities)
                 draw_minimap(screen, player, walls, entities, exit_tiles)
                 draw_ui(screen, player, current_level_index, current_wave, len([e for e in entities if isinstance(e, Enemy) and e.health > 0]), (font, font_hud, font_wave), entities)
             
@@ -362,3 +419,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+    
