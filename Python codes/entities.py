@@ -62,7 +62,6 @@ class Entity(pygame.sprite.Sprite):
         self.rect.topleft = (x, y)
         self.attack_timer = 0
 
-    # FIX: entities=None toegevoegd
     def move_and_collide(self, dx, dy, walls, entities=None):
         if dx != 0:
             self.x += dx
@@ -74,14 +73,7 @@ class Entity(pygame.sprite.Sprite):
             if entities:
                 for e in entities:
                     if isinstance(e, PushableRock) and hitbox.colliderect(e.rect):
-                        e.x += dx # Duw de rots!
-                        e.rect.topleft = (e.x, e.y)
-                        # Check of de rots nu niet in een muur zit
-                        for w in walls:
-                            if e.rect.colliderect(w.rect):
-                                e.x -= dx; e.rect.topleft = (e.x, e.y) # Rots zit vast
-                                self.x -= dx; self.rect.topleft = (self.x, self.y) # Speler zit vast
-                                break
+                        self.x -= dx; self.rect.topleft = (self.x, self.y); break
         if dy != 0:
             self.y += dy
             self.rect.topleft = (self.x, self.y)
@@ -92,23 +84,19 @@ class Entity(pygame.sprite.Sprite):
             if entities:
                 for e in entities:
                     if isinstance(e, PushableRock) and hitbox.colliderect(e.rect):
-                        e.y += dy # Duw de rots!
-                        e.rect.topleft = (e.x, e.y)
-                        # Check of de rots nu niet in een muur zit
-                        for w in walls:
-                            if e.rect.colliderect(w.rect):
-                                e.y -= dy; e.rect.topleft = (e.x, e.y)
-                                self.y -= dy; self.rect.topleft = (self.x, self.y)
-                                break
+                        self.y -= dy; self.rect.topleft = (self.x, self.y); break
 
+    # DE GEFIKSTE LEVENSBALK (Crash-proof en met witte omlijning!)
     def draw_health_bar(self, surface, camera, offset_y=-12):
-        bar_width = self.width
-        bar_height = 6
-        fill = max(0, (self.health / self.max_health) * bar_width)
-        bx = self.x - camera.x
-        by = self.y - camera.y + offset_y
-        pygame.draw.rect(surface, RED, (bx, by, bar_width, bar_height)) 
-        pygame.draw.rect(surface, GREEN, (bx, by, fill, bar_height))    
+        bar_width = int(self.width)
+        bar_height = 8 
+        fill = int(max(0, (self.health / self.max_health) * bar_width))
+        bx = int(self.x - camera.x)
+        by = int(self.y - camera.y + offset_y)
+        
+        pygame.draw.rect(surface, (150, 0, 0), (bx, by, bar_width, bar_height)) 
+        pygame.draw.rect(surface, (0, 200, 0), (bx, by, fill, bar_height))    
+        pygame.draw.rect(surface, (255, 255, 255), (bx, by, bar_width, bar_height), 1)
 
     def draw(self, surface, camera):
         draw_pos = (self.x - camera.x, self.y - camera.y)
@@ -125,8 +113,15 @@ class Player(Entity):
         self.is_moving = False
         self.is_blocking = False
         self.spell_cooldown = 0 
-        self.animations = {'up': [], 'down': [], 'left': [], 'right': []}
         
+        # --- DASH VARIABELEN ---
+        self.is_dashing = False
+        self.dash_timer = 0
+        self.dash_cooldown = 0
+        self.dash_speed = 18 # Supersnel!
+        self.is_invincible = False # Maakt je onsterfelijk tijdens de rol
+        
+        self.animations = {'up': [], 'down': [], 'left': [], 'right': []}
         try:
             for direction in ['up', 'down', 'left', 'right']:
                 i = 0
@@ -139,15 +134,13 @@ class Player(Entity):
                     i += 1
             if self.animations['down']: self.image = self.animations['down'][0] 
         except: self.image = None
-        
-        # We hebben de sword_img code verwijderd, we gaan pure energie tekenen!
 
     def take_damage(self, amount): 
-        if self.is_blocking: return 
+        if self.is_blocking or self.is_invincible: return 
         self.health -= amount
 
     def attack(self, enemies, walls): 
-        if self.is_blocking: return 
+        if self.is_blocking or self.is_dashing: return 
         self.attack_timer = 15 
         for enemy in enemies:
             dist = math.hypot(self.x - enemy.x, self.y - enemy.y)
@@ -161,8 +154,7 @@ class Player(Entity):
                 if "Magisch Zwaard" in self.inventory: enemy.health -= 40
                 else: enemy.health -= 20
                 
-                # --- HIER IS DE FIX: De Baas krijgt GEEN knockback! ---
-                if type(enemy).__name__ != 'Boss':
+                if not isinstance(enemy, Boss):
                     old_x, old_y = enemy.x, enemy.y
                     if self.facing == 'left': enemy.x -= 40
                     elif self.facing == 'right': enemy.x += 40
@@ -179,27 +171,89 @@ class Player(Entity):
     def update(self, walls: list, player=None, entities=None):
         if self.attack_timer > 0: self.attack_timer -= 1
         if self.spell_cooldown > 0: self.spell_cooldown -= 1
+        if self.dash_cooldown > 0: self.dash_cooldown -= 1
         
         keys = pygame.key.get_pressed()
         self.is_moving = False 
 
-        # TACTISCH SCHILD: Je kan nu lopen, maar op halve snelheid!
-        if keys[pygame.K_LSHIFT] and "Schild" in self.inventory:
+        is_grabbing = False
+        grabbed_rock = None
+        
+        if keys[pygame.K_e] and entities: 
+            check_rect = self.rect.copy()
+            if self.facing == 'up': check_rect.y -= 15
+            elif self.facing == 'down': check_rect.y += 15
+            elif self.facing == 'left': check_rect.x -= 15
+            elif self.facing == 'right': check_rect.x += 15
+            for e in entities:
+                if isinstance(e, PushableRock) and check_rect.colliderect(e.rect):
+                    is_grabbing = True
+                    grabbed_rock = e
+                    break
+
+        if is_grabbing:
+            dx, dy = 0, 0
+            loopsnelheid = self.speed * 0.6 
+            if self.facing in ['left', 'right']:
+                if keys[pygame.K_LEFT] or keys[pygame.K_a]: dx = -loopsnelheid
+                elif keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx = loopsnelheid
+            elif self.facing in ['up', 'down']:
+                if keys[pygame.K_UP] or keys[pygame.K_w]: dy = -loopsnelheid
+                elif keys[pygame.K_DOWN] or keys[pygame.K_s]: dy = loopsnelheid
+                
+            if dx != 0 or dy != 0:
+                self.is_moving = True
+                duw_geslaagd = grabbed_rock.move_rock(dx, dy, walls, player=self)
+                if duw_geslaagd:
+                    self.x += dx; self.y += dy
+                    self.rect.topleft = (self.x, self.y)
+                    hitbox = self.rect.inflate(-15, -15)
+                    for w in walls:
+                        if hitbox.colliderect(w.rect):
+                            self.x -= dx; self.y -= dy
+                            self.rect.topleft = (self.x, self.y)
+                            grabbed_rock.move_rock(-dx, -dy, walls, player=self) 
+                            break
+
+        elif keys[pygame.K_LSHIFT] and "Schild" in self.inventory:
             self.is_blocking = True
             actuele_speed = self.speed / 2 
         else:
             self.is_blocking = False
             actuele_speed = self.speed
 
-        dx, dy = 0, 0
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]: dx = -actuele_speed; self.facing = 'left'; self.is_moving = True
-        elif keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx = actuele_speed; self.facing = 'right'; self.is_moving = True
-        if keys[pygame.K_UP] or keys[pygame.K_w]: dy = -actuele_speed; self.facing = 'up'; self.is_moving = True
-        elif keys[pygame.K_DOWN] or keys[pygame.K_s]: dy = actuele_speed; self.facing = 'down'; self.is_moving = True
+        # --- NIEUW: DASH LOGICA OP LINKER CTRL ---
+        if keys[pygame.K_LCTRL] and self.dash_cooldown == 0 and not self.is_blocking and not is_grabbing:
+            self.is_dashing = True
+            self.dash_timer = 8 # Hoe lang de dash duurt (in frames)
+            self.dash_cooldown = 45 # Hoe lang je moet wachten tot de volgende (0.75 seconde)
 
-        self.move_and_collide(dx, dy, walls, entities)
+        if self.is_dashing:
+            self.is_invincible = True
+            self.dash_timer -= 1
+            dx, dy = 0, 0
+            if self.facing == 'left': dx = -self.dash_speed
+            elif self.facing == 'right': dx = self.dash_speed
+            elif self.facing == 'up': dy = -self.dash_speed
+            elif self.facing == 'down': dy = self.dash_speed
+            
+            self.move_and_collide(dx, dy, walls, entities)
+            
+            if self.dash_timer <= 0:
+                self.is_dashing = False
+                self.is_invincible = False
+                
+        elif not is_grabbing:
+            # Normaal lopen als je niet dasht of vastpakt
+            dx, dy = 0, 0
+            if keys[pygame.K_LEFT] or keys[pygame.K_a]: dx = -actuele_speed; self.facing = 'left'; self.is_moving = True
+            elif keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx = actuele_speed; self.facing = 'right'; self.is_moving = True
+            if keys[pygame.K_UP] or keys[pygame.K_w]: dy = -actuele_speed; self.facing = 'up'; self.is_moving = True
+            elif keys[pygame.K_DOWN] or keys[pygame.K_s]: dy = actuele_speed; self.facing = 'down'; self.is_moving = True
+            self.move_and_collide(dx, dy, walls, entities)
 
-        if self.is_moving:
+        # Animatie frame berekenen
+        if self.is_moving or self.is_dashing:
             self.frame_index += self.animation_speed
             if self.frame_index >= len(self.animations[self.facing]): self.frame_index = 0.0
         else: self.frame_index = 0.0
@@ -212,7 +266,6 @@ class Player(Entity):
         draw_rect = self.rect.move(-camera.x, -camera.y)
         cx, cy = draw_rect.center 
         
-        # --- HET NIEUWE DIRECTIONELE SCHILD ---
         if self.is_blocking:
             shield_dist = 30
             if self.facing == 'up': p1, p2 = (cx - 25, cy - shield_dist), (cx + 25, cy - shield_dist)
@@ -220,53 +273,35 @@ class Player(Entity):
             elif self.facing == 'left': p1, p2 = (cx - shield_dist, cy - 25), (cx - shield_dist, cy + 25)
             elif self.facing == 'right': p1, p2 = (cx + shield_dist, cy - 25), (cx + shield_dist, cy + 25)
 
-            # Teken de dikke energiemuur voor de speler
-            pygame.draw.line(surface, (0, 255, 255), p1, p2, 8) # Dikke Cyaan rand
-            pygame.draw.line(surface, WHITE, p1, p2, 3)         # Felle witte kern
+            pygame.draw.line(surface, (0, 255, 255), p1, p2, 8) 
+            pygame.draw.line(surface, WHITE, p1, p2, 3)         
         
-        # --- DE BLAUWE ENERGIE STRAAL (ZWAARD) ---
         if self.attack_timer > 0 and not self.is_blocking:
-            # Het magische zwaard is extra lang (75 pixels)
             zwaard_lengte = 75 if "Magisch Zwaard" in self.inventory else 40
-            
             if self.facing == 'up': end_pos = (cx, cy - zwaard_lengte)
             elif self.facing == 'down': end_pos = (cx, cy + zwaard_lengte)
             elif self.facing == 'left': end_pos = (cx - zwaard_lengte, cy)
             else: end_pos = (cx + zwaard_lengte, cy)
 
             if "Magisch Zwaard" in self.inventory:
-                # 1. Diepblauwe basis
                 pygame.draw.line(surface, (0, 0, 200), (cx, cy), end_pos, 14)
-                # 2. Cyaan gloed eroverheen
                 pygame.draw.line(surface, (0, 255, 255), (cx, cy), end_pos, 8)
-                # 3. Gloeiend hete witte kern
                 pygame.draw.line(surface, WHITE, (cx, cy), end_pos, 4)
-
-                # 4. Knetterende vonken aan het uiteinde!
                 for _ in range(4):
                     vx = end_pos[0] + random.randint(-12, 12)
                     vy = end_pos[1] + random.randint(-12, 12)
                     pygame.draw.circle(surface, (0, 255, 255), (vx, vy), random.randint(2, 4))
             else:
-                # Het normale stalen zwaard
                 pygame.draw.line(surface, (150, 150, 150), (cx, cy), end_pos, 6) 
                 pygame.draw.line(surface, WHITE, (cx, cy), end_pos, 2)  
 
 class Enemy(Entity):
     def __init__(self, x, y, difficulty="Normal"):
         self.difficulty = difficulty
-        
-        # HIER STELLEN WE DE MOEILIJKHEIDSGRAAD IN! (HP_Multiplier, Damage_Multiplier)
-        mults = {
-            "Easy": (0.75, 0.5),     # Zwak en doet weinig pijn
-            "Normal": (1.0, 1.0),    # Standaard
-            "Hard": (1.5, 1.5),      # Sterk en pijnlijk
-            "Impossible": (2.5, 3.0) # Absolute nachtmerrie
-        }
+        mults = { "Easy": (0.75, 0.5), "Normal": (1.0, 1.0), "Hard": (1.5, 1.5), "Impossible": (2.5, 3.0) }
         self.hp_mult, self.dmg_mult = mults.get(difficulty, (1.0, 1.0))
         
-        base_hp = 50
-        super().__init__(x, y, 50, 50, RED, 2, max_health=int(base_hp * self.hp_mult)) 
+        super().__init__(x, y, 50, 50, RED, 2, max_health=int(50 * self.hp_mult)) 
         
         self.visual_size = 80 
         self.attack_cooldown = 0
@@ -275,6 +310,14 @@ class Enemy(Entity):
         self.animation_speed = 0.1
         self.facing_right = True
         self.is_removable = False
+        
+        # AI Status
+        self.ai_state = 'patrol' 
+        self.patrol_target = None
+        self.patrol_timer = 0
+        self.last_known_pos = None
+        self.investigate_timer = 0
+        
         self.path = []
         self.path_timer = 0
         self.animations = {'idle': [], 'walk': [], 'attack': [], 'death': []}
@@ -294,7 +337,7 @@ class Enemy(Entity):
             if self.animations['idle']: self.image = self.animations['idle'][0]
         except: self.image = None
 
-    def update(self, walls, player=None):
+    def update(self, walls, player=None, entities=None):
         if self.health <= 0:
             self.current_anim_state = 'death'
             if self.animations['death']:
@@ -314,24 +357,47 @@ class Enemy(Entity):
         dist = math.hypot(self.x - player.x, self.y - player.y) if player else 999
         
         can_see_player = False
-        if dist < 300: 
+        if dist < 350: 
             can_see_player = True
             for wall in walls:
                 if wall.rect.clipline(self.rect.center, player.rect.center):
                     can_see_player = False 
                     break
                     
-        ai_state = 'chase' if can_see_player else 'patrol'
+        if can_see_player:
+            self.ai_state = 'chase'
+            self.last_known_pos = (player.rect.centerx, player.rect.centery)
+            self.investigate_timer = 180 
+        elif self.investigate_timer > 0:
+            self.ai_state = 'investigate'
+            self.investigate_timer -= 1
+        else:
+            self.ai_state = 'patrol'
 
-        if ai_state == 'chase' and self.attack_timer == 0:
+        target_pos = None
+        current_speed = self.speed
+
+        if self.ai_state == 'chase': target_pos = (player.rect.centerx, player.rect.centery)
+        elif self.ai_state == 'investigate':
+            target_pos = self.last_known_pos
+            if target_pos and math.hypot(self.x - target_pos[0], self.y - target_pos[1]) < 20:
+                self.investigate_timer = 0
+        elif self.ai_state == 'patrol':
+            current_speed = self.speed * 0.4 
+            self.patrol_timer += 1
+            if self.patrol_target is None or math.hypot(self.x - self.patrol_target[0], self.y - self.patrol_target[1]) < 20 or self.patrol_timer > 120:
+                self.patrol_target = (self.x + random.randint(-150, 150), self.y + random.randint(-150, 150))
+                self.patrol_timer = 0
+            target_pos = self.patrol_target
+
+        dx, dy = 0, 0
+        if target_pos and self.attack_timer == 0:
             is_moving = True
-            dx, dy = 0, 0
             self.path_timer += 1
-            
             if self.path_timer >= 30 or not self.path:
                 self.path_timer = 0
                 start_tile = (int(self.rect.centerx // TILE_SIZE), int(self.rect.centery // TILE_SIZE))
-                goal_tile = (int(player.rect.centerx // TILE_SIZE), int(player.rect.centery // TILE_SIZE))
+                goal_tile = (int(target_pos[0] // TILE_SIZE), int(target_pos[1] // TILE_SIZE))
                 self.path = get_path(start_tile, goal_tile, walls)
 
             if self.path:
@@ -341,28 +407,46 @@ class Enemy(Entity):
                 dir_x, dir_y = target_x - self.x, target_y - self.y
                 dist_to_target = math.hypot(dir_x, dir_y)
                 
-                if dist_to_target > self.speed:
-                    dx = (dir_x / dist_to_target) * self.speed
-                    dy = (dir_y / dist_to_target) * self.speed
+                if dist_to_target > current_speed:
+                    dx = (dir_x / dist_to_target) * current_speed
+                    dy = (dir_y / dist_to_target) * current_speed
                     self.facing_right = dx > 0
                 else: self.path.pop(0)
             else:
-                dir_x, dir_y = player.x - self.x, player.y - self.y
-                dist_to_player = math.hypot(dir_x, dir_y)
-                if dist_to_player > 0:
-                    dx = (dir_x / dist_to_player) * self.speed
-                    dy = (dir_y / dist_to_player) * self.speed
+                dir_x, dir_y = target_pos[0] - self.rect.centerx, target_pos[1] - self.rect.centery
+                dist_to_target = math.hypot(dir_x, dir_y)
+                if dist_to_target > 0:
+                    dx = (dir_x / dist_to_target) * current_speed
+                    dy = (dir_y / dist_to_target) * current_speed
                     self.facing_right = dx > 0
             
+            # --- ZWERM LOGICA ---
+            if entities and self.ai_state == 'chase':
+                separation_dx, separation_dy = 0, 0
+                for other in entities:
+                    if isinstance(other, Enemy) and other != self and other.health > 0:
+                        dist_to_other = math.hypot(self.x - other.x, self.y - other.y)
+                        if 0 < dist_to_other < 60: 
+                            separation_dx += (self.x - other.x) / dist_to_other
+                            separation_dy += (self.y - other.y) / dist_to_other
+                if separation_dx != 0 or separation_dy != 0:
+                    dx += separation_dx * 2.5 
+                    dy += separation_dy * 2.5
+                    totale_snelheid = math.hypot(dx, dy)
+                    if totale_snelheid > 0:
+                        dx = (dx / totale_snelheid) * current_speed
+                        dy = (dy / totale_snelheid) * current_speed
+
             self.move_and_collide(dx, dy, walls)
 
-        # HIER GEBRUIKEN WE DE DAMAGE MULTIPLIER!
+        # Let op: speler moet geraakt KUNNEN worden (niet invincible)
         if player and self.rect.colliderect(player.rect) and self.attack_cooldown == 0:
-            player.take_damage(int(10 * self.dmg_mult))
+            if not getattr(player, 'is_invincible', False):
+                player.take_damage(int(10 * self.dmg_mult))
             self.attack_timer = 30; self.attack_cooldown = 90; is_moving = False
 
         if self.attack_timer > 0: self.current_anim_state = 'attack'
-        elif is_moving: self.current_anim_state = 'walk'
+        elif is_moving and (dx != 0 or dy != 0): self.current_anim_state = 'walk'
         else: self.current_anim_state = 'idle'
 
         if self.animations[self.current_anim_state]:
@@ -378,30 +462,25 @@ class Enemy(Entity):
             surface.blit(self.image, (self.x - camera.x - offset_x, self.y - camera.y - offset_y))
         else:
             pygame.draw.rect(surface, self.color, (self.x - camera.x, self.y - camera.y, self.width, self.height))
-        if not self.is_removable and self.health > 0:
-            self.draw_health_bar(surface, camera, offset_y=-30) 
+            
+        # Zichtbare HP Balk (alleen voor normale goblins)
+        if not self.is_removable and self.health > 0 and not isinstance(self, Boss):
+            self.draw_health_bar(surface, camera, offset_y=-20)
 
 class Boss(Enemy):
     def __init__(self, x, y, difficulty="Normal"):
-        super().__init__(x, y, difficulty) # Haal de multipliers uit de Enemy klasse
-        
-        # Vermenigvuldig de gigantische HP van de baas! (Impossible = 1250 HP!)
+        super().__init__(x, y, difficulty) 
         self.max_health = int(500 * self.hp_mult)
         self.health = self.max_health
         self.speed = 1.5 
-        
         self.width, self.height = 70, 70
         self.rect = pygame.Rect(x, y, self.width, self.height)
         self.visual_size = 200 
         
         self.special_cooldown, self.slam_timer, self.slam_radius = 180, 0, 120        
         self.just_spawned, self.trigger_slam_shake = True, False
-        
         self.charge_cooldown = 240 
-        self.charge_timer = 0      
-        self.charge_duration = 0   
-        self.charge_dx = 0
-        self.charge_dy = 0
+        self.charge_timer, self.charge_duration, self.charge_dx, self.charge_dy = 0, 0, 0, 0
         
         self.animations = {'idle': [], 'walk': [], 'attack': [], 'death': []}
         try:
@@ -419,7 +498,7 @@ class Boss(Enemy):
             if self.animations['idle']: self.image = self.animations['idle'][0]
         except: self.image = None
 
-    def update(self, walls, player=None):
+    def update(self, walls, player=None, entities=None):
         if self.health <= 0:
             self.current_anim_state = 'death'
             if self.animations['death']:
@@ -448,8 +527,7 @@ class Boss(Enemy):
                 if not self.facing_right: self.image = pygame.transform.flip(self.image, True, False)
             if self.slam_timer == 5: 
                 self.trigger_slam_shake = True  
-                if dist <= self.slam_radius: 
-                    # Slam damage scaling!
+                if dist <= self.slam_radius and not getattr(player, 'is_invincible', False): 
                     player.take_damage(int(25 * self.dmg_mult)) 
             return 
 
@@ -457,7 +535,6 @@ class Boss(Enemy):
             self.charge_timer = 45 
             self.charge_cooldown = 300 
             self.current_anim_state = 'idle'
-            
             dir_x, dir_y = player.x - self.x, player.y - self.y
             if dist > 0:
                 self.charge_dx = (dir_x / dist) * 12 
@@ -468,8 +545,7 @@ class Boss(Enemy):
         if self.charge_timer > 0:
             self.charge_timer -= 1
             self.current_anim_state = 'idle' 
-            if self.charge_timer == 0:
-                self.charge_duration = 15 
+            if self.charge_timer == 0: self.charge_duration = 15 
             return
             
         if self.charge_duration > 0:
@@ -478,8 +554,8 @@ class Boss(Enemy):
             self.move_and_collide(self.charge_dx, self.charge_dy, walls)
             
             if player and self.rect.colliderect(player.rect):
-                # Dash damage scaling!
-                player.take_damage(int(25 * self.dmg_mult))
+                if not getattr(player, 'is_invincible', False):
+                    player.take_damage(int(25 * self.dmg_mult))
                 self.trigger_slam_shake = True
                 self.charge_duration = 0 
                 self.attack_cooldown = 60 
@@ -489,24 +565,43 @@ class Boss(Enemy):
         if self.attack_timer > 0: self.attack_timer -= 1
         
         is_moving = False
-        
         can_see_player = False
-        if dist < 400: 
+        if dist < 450: 
             can_see_player = True
             for wall in walls:
                 if wall.rect.clipline(self.rect.center, player.rect.center):
                     can_see_player = False 
                     break
                     
-        ai_state = 'chase' if can_see_player else 'patrol'
+        if can_see_player:
+            self.ai_state = 'chase'
+            self.last_known_pos = (player.rect.centerx, player.rect.centery)
+            self.investigate_timer = 180 
+        elif self.investigate_timer > 0:
+            self.ai_state = 'investigate'; self.investigate_timer -= 1
+        else: self.ai_state = 'patrol'
 
-        if ai_state == 'chase' and self.attack_timer == 0:
-            is_moving = True; dx, dy = 0, 0
+        target_pos, current_speed = None, self.speed
+        if self.ai_state == 'chase': target_pos = (player.rect.centerx, player.rect.centery)
+        elif self.ai_state == 'investigate':
+            target_pos = self.last_known_pos
+            if target_pos and math.hypot(self.x - target_pos[0], self.y - target_pos[1]) < 20: self.investigate_timer = 0
+        elif self.ai_state == 'patrol':
+            current_speed = self.speed * 0.4 
+            self.patrol_timer += 1
+            if self.patrol_target is None or math.hypot(self.x - self.patrol_target[0], self.y - self.patrol_target[1]) < 20 or self.patrol_timer > 120:
+                self.patrol_target = (self.x + random.randint(-150, 150), self.y + random.randint(-150, 150))
+                self.patrol_timer = 0
+            target_pos = self.patrol_target
+
+        dx, dy = 0, 0
+        if target_pos and self.attack_timer == 0:
+            is_moving = True
             self.path_timer += 1
             if self.path_timer >= 30 or not self.path:
                 self.path_timer = 0
                 start_tile = (int(self.rect.centerx // TILE_SIZE), int(self.rect.centery // TILE_SIZE))
-                goal_tile = (int(player.rect.centerx // TILE_SIZE), int(player.rect.centery // TILE_SIZE))
+                goal_tile = (int(target_pos[0] // TILE_SIZE), int(target_pos[1] // TILE_SIZE))
                 self.path = get_path(start_tile, goal_tile, walls)
 
             if self.path:
@@ -515,27 +610,40 @@ class Boss(Enemy):
                 target_y = next_tile[1] * TILE_SIZE + (TILE_SIZE // 2) - (self.height // 2)
                 dir_x, dir_y = target_x - self.x, target_y - self.y
                 dist_to_target = math.hypot(dir_x, dir_y)
-                
-                if dist_to_target > self.speed:
-                    dx = (dir_x / dist_to_target) * self.speed
-                    dy = (dir_y / dist_to_target) * self.speed
+                if dist_to_target > current_speed:
+                    dx = (dir_x / dist_to_target) * current_speed; dy = (dir_y / dist_to_target) * current_speed
                     self.facing_right = dx > 0
                 else: self.path.pop(0)
             else:
-                dir_x, dir_y = player.x - self.x, player.y - self.y
-                dist_to_player = math.hypot(dir_x, dir_y)
-                if dist_to_player > 0:
-                    dx = (dir_x / dist_to_player) * self.speed
-                    dy = (dir_y / dist_to_player) * self.speed
+                dir_x, dir_y = target_pos[0] - self.rect.centerx, target_pos[1] - self.rect.centery
+                dist_to_target = math.hypot(dir_x, dir_y)
+                if dist_to_target > 0:
+                    dx = (dir_x / dist_to_target) * current_speed; dy = (dir_y / dist_to_target) * current_speed
                     self.facing_right = dx > 0
+                    
+            if entities and self.ai_state == 'chase':
+                separation_dx, separation_dy = 0, 0
+                for other in entities:
+                    if isinstance(other, Enemy) and other != self and other.health > 0:
+                        dist_to_other = math.hypot(self.x - other.x, self.y - other.y)
+                        if 0 < dist_to_other < 80: 
+                            separation_dx += (self.x - other.x) / dist_to_other
+                            separation_dy += (self.y - other.y) / dist_to_other
+                if separation_dx != 0 or separation_dy != 0:
+                    dx += separation_dx * 2.0; dy += separation_dy * 2.0
+                    totale_snelheid = math.hypot(dx, dy)
+                    if totale_snelheid > 0:
+                        dx = (dx / totale_snelheid) * current_speed; dy = (dy / totale_snelheid) * current_speed
+
             self.move_and_collide(dx, dy, walls)
 
         if player and self.rect.colliderect(player.rect) and self.attack_cooldown == 0:
-            # Kleine snelle aanval scaling!
-            player.take_damage(int(10 * self.dmg_mult)); self.attack_timer = 30; self.attack_cooldown = 90; is_moving = False
+            if not getattr(player, 'is_invincible', False):
+                player.take_damage(int(15 * self.dmg_mult))
+            self.attack_timer = 30; self.attack_cooldown = 90; is_moving = False
 
         if self.attack_timer > 0: self.current_anim_state = 'attack'
-        elif is_moving: self.current_anim_state = 'walk'
+        elif is_moving and (dx != 0 or dy != 0): self.current_anim_state = 'walk'
         else: self.current_anim_state = 'idle'
 
         if self.animations[self.current_anim_state]:
@@ -565,11 +673,38 @@ class Boss(Enemy):
             
         super().draw(surface, camera)
 
+class WhiteOrc(Boss):
+    def __init__(self, x, y, difficulty="Normal"):
+        super().__init__(x, y, difficulty)
+        self.max_health = int(1000 * self.hp_mult)
+        self.health = self.max_health
+        self.speed = 2.0 
+        self.visual_size = 250 
+        
+        self.animations = {'idle': [], 'walk': [], 'attack': [], 'death': []}
+        try:
+            for state in ['idle', 'walk', 'attack', 'death']:
+                i = 0
+                while True:
+                    pad = os.path.join(PNG_DIR, "White Orc PNG", f"white_{state}", f"{i}.png")
+                    if not os.path.exists(pad): break
+                    img = pygame.image.load(pad).convert_alpha()
+                    img = pygame.transform.scale(img, (self.visual_size, self.visual_size))
+                    self.animations[state].append(img)
+                    i += 1
+            if self.animations['idle']: self.image = self.animations['idle'][0]
+        except: 
+            self.image = pygame.Surface((self.width, self.height))
+            self.image.fill((255, 255, 255)) 
+
 class NPC(Entity):
-    def __init__(self, x, y):
+    def __init__(self, x, y, level_index=0): 
         super().__init__(x, y, 40, 40, (128, 0, 128), 0, max_health=100)
-        self.quest_state = 'start'
-        self.message, self.talk_timer = "", 0 
+        self.level_index = level_index
+        self.is_talking = False 
+        self.dialogue_pages = [] 
+        self.current_page = 0    
+        self.has_spoken = False 
         try:
             pad = os.path.join(PNG_DIR, "Different PNG", "wizard.png")
             if os.path.exists(pad):
@@ -578,30 +713,76 @@ class NPC(Entity):
         except: pass
 
     def update(self, walls=None, player=None):
-        if self.talk_timer > 0: self.talk_timer -= 1
+        if self.is_talking and player:
+            dist = math.hypot(self.x - player.x, self.y - player.y)
+            if dist > 80: 
+                self.is_talking = False
 
     def interact(self, player):
-        self.talk_timer = 180 
-        if self.quest_state == 'start':
-            self.message = "Goblins bewaken de kist! Versla ze allemaal!"
-            self.quest_state = 'waiting'
-        elif self.quest_state == 'waiting':
-            if "Gouden Sleutel" in player.inventory:
-                self.message = "Geweldig! De Uitgang is nu geopend! Succes!"
-                player.inventory.remove("Gouden Sleutel")
-                player.inventory.append("Kasteel Toegang") 
-                self.quest_state = 'done'
-            else: self.message = "Versla alle Goblins en breng me de sleutel!"
-        elif self.quest_state == 'done':
-            self.message = "De uitgang is vrij!"
+        if self.is_talking: return 
+        
+        self.has_spoken = True 
+        self.is_talking = True
+        self.current_page = 0
+        
+        if self.level_index == 0:
+            self.dialogue_pages = [
+                ["Help! Ik zit hier al 60 jaar vast...", "Ik weet dat er meer dan 3 levels zijn,", "maar ik durfde niet verder."],
+                ["In level 3 zit een gruwelijke baas.", "Ik ben gillend weggerend!", "Versla telkens alle monsters om de deur te openen."],
+                ["Dood alle monsters hier om verder te gaan!", "Succes, dappere held..."]
+            ]
+        elif self.level_index == 1:
+            self.dialogue_pages = [
+                ["Pas op, dit is een gevaarlijk doolhof", "vol met dodelijke vallen!"],
+                ["Versla weer alle monsters om door te gaan.", "Ergens hier is een Magisch Zwaard verstopt!", "Zoek het voordat je verder gaat."],
+                ["Vind het Magisch Zwaard en versla", "alle goblins in dit doolhof!"]
+            ]
+        elif self.level_index == 2:
+            self.dialogue_pages = [
+                ["We zijn in de troonzaal!", "Dit is een arena. Je moet", "alle waves zien te overleven."],
+                ["Aan het einde van de waves", "verschijnt de Orc Generaal!", "Maak je klaar voor het gevecht!"],
+                ["Overleef de waves en", "versla de Orc Generaal!"]
+            ]
+        elif self.level_index == 3:
+            self.dialogue_pages = [
+                ["Ongelofelijk... Ik ben nog nooit", "zo diep in de kerker geweest!"],
+                ["Het is hier snikheet in deze", "Vuur-Catacomben.", "Ik weet wel dat hier ergens een Schild ligt!"],
+                ["Zoek het Schild en blijf in leven!"]
+            ]
+        else:
+            self.dialogue_pages = [
+                ["Overleef deze oneindige catacomben", "tot je de Witte Orc vindt..."]
+            ]
+
+    def advance_dialogue(self):
+        if self.current_page < len(self.dialogue_pages) - 1:
+            self.current_page += 1 
+        else:
+            self.is_talking = False 
 
     def draw(self, surface, camera):
         super().draw(surface, camera)
-        if self.talk_timer > 0:
-            font = pygame.font.Font(None, 24)
-            text_surf = font.render(self.message, True, WHITE, BLACK)
-            text_rect = text_surf.get_rect(centerx=self.rect.centerx - camera.x, bottom=self.rect.top - 10 - camera.y)
+        font = pygame.font.Font(None, 24)
+        font_small = pygame.font.Font(None, 20)
+        
+        if not self.has_spoken:
+            t = pygame.time.get_ticks()
+            bounce = math.sin(t / 200.0) * 5 
+            text_surf = font.render("Praat met mij [E]!", True, GREEN, BLACK)
+            text_rect = text_surf.get_rect(centerx=self.rect.centerx - camera.x, bottom=self.rect.top - 15 + bounce - camera.y)
             surface.blit(text_surf, text_rect)
+
+        if self.is_talking and self.dialogue_pages:
+            huidige_lijst = self.dialogue_pages[self.current_page]
+            for i, regel in enumerate(huidige_lijst):
+                text_surf = font.render(regel, True, YELLOW, BLACK)
+                y_offset = (len(huidige_lijst) - i + 1) * 20
+                text_rect = text_surf.get_rect(centerx=self.rect.centerx - camera.x, bottom=self.rect.top - 5 - y_offset - camera.y)
+                surface.blit(text_surf, text_rect)
+                
+            spatie_surf = font_small.render("[SPATIE] Verder", True, (0, 255, 255), BLACK)
+            spatie_rect = spatie_surf.get_rect(centerx=self.rect.centerx - camera.x, bottom=self.rect.top - 10 - camera.y)
+            surface.blit(spatie_surf, spatie_rect)
 
 class Item(Entity):
     def __init__(self, x, y, item_name):
@@ -651,8 +832,7 @@ class Potion(Entity):
     def update(self, walls=None, player=None):
         if player and self.rect.colliderect(player.rect) and not self.is_picked_up:
             if player.health < player.max_health:
-                heal_amount = 30
-                player.health = min(player.max_health, player.health + heal_amount)
+                player.health = min(player.max_health, player.health + 30)
                 self.spawn_heal_text = True 
                 self.is_picked_up = True
                 
@@ -675,10 +855,8 @@ class Trap(Entity):
             self.image = self.image_active if self.is_active else self.image_safe
             
         if self.damage_cooldown > 0: self.damage_cooldown -= 1
-        
         if self.is_active and player:
             trap_hitbox = self.rect.inflate(-20, -20) 
-            
             if trap_hitbox.colliderect(player.rect) and self.damage_cooldown == 0:
                 if not getattr(player, 'is_invincible', False):
                     player.take_damage(20); self.damage_cooldown = 60
@@ -702,191 +880,116 @@ class Fireball(Entity):
 
 class DamageText(Entity):
     def __init__(self, x, y, text, color):
-        super().__init__(x, y, 0, 0, color, 1, 1) # Onzichtbare body
+        super().__init__(x, y, 0, 0, color, 1, 1) 
         self.text = text
         self.color = color
-        self.timer = 45 # Blijft 0.75 seconde op het scherm (60 FPS * 0.75)
+        self.timer = 45 
         self.is_removable = False
         self.font = pygame.font.Font(None, 36)
-        
-        # Geef het getalletje een kleine random positie zodat meerdere klappen niet overlappen
         self.x += random.randint(-15, 15)
         self.y += random.randint(-10, 10)
 
     def update(self, walls=None, player=None):
-        self.y -= 1.5 # Zweef langzaam omhoog!
+        self.y -= 1.5 
         self.timer -= 1
         if self.timer <= 0:
             self.is_removable = True
 
     def draw(self, surface, camera):
         text_surf = self.font.render(self.text, True, self.color)
-        outline_surf = self.font.render(self.text, True, (0, 0, 0)) # Zwart randje voor leesbaarheid
-        
+        outline_surf = self.font.render(self.text, True, (0, 0, 0)) 
         draw_x = self.x - camera.x
         draw_y = self.y - camera.y
-        
-        # Teken 4x de zwarte outline
         for dx, dy in [(-1,-1), (1,-1), (-1,1), (1,1)]:
             surface.blit(outline_surf, (draw_x + dx, draw_y + dy))
-        
-        # Teken de gekleurde tekst in het midden
         surface.blit(text_surf, (draw_x, draw_y))
             
 class PushableRock(Entity):
     def __init__(self, x, y):
-        # Een grote zware bruine vierkante steen
-        super().__init__(x, y, 46, 46, (139, 69, 19), speed=0, max_health=999) 
-        self.image = pygame.Surface((46, 46))
-        self.image.fill((100, 70, 40))
-        pygame.draw.rect(self.image, (60, 40, 20), (0, 0, 46, 46), 4) # Donker randje
-        # Extra lijnen zodat het op een rots lijkt
-        pygame.draw.line(self.image, (60, 40, 20), (10, 10), (36, 36), 3)
-        pygame.draw.line(self.image, (60, 40, 20), (36, 10), (10, 36), 3)
+        super().__init__(x, y, 44, 44, (139, 69, 19), speed=0, max_health=999) 
+        try:
+            pad = os.path.join(PNG_DIR, "Different PNG", "rots.png")
+            if os.path.exists(pad):
+                img = pygame.image.load(pad).convert_alpha()
+                self.image = pygame.transform.scale(img, (self.width, self.height))
+            else: raise Exception("No PNG")
+        except:
+            self.image = pygame.Surface((44, 44), pygame.SRCALPHA)
+            pygame.draw.circle(self.image, (120, 120, 120), (22, 22), 20) 
+            pygame.draw.circle(self.image, (80, 80, 80), (22, 22), 20, 4) 
+            pygame.draw.circle(self.image, (180, 180, 180), (12, 12), 6)  
 
-    def update(self, walls=None, player=None):
-        pass # De logica zit bij de speler die hem duwt
+    def update(self, walls=None, player=None, entities=None):
+        pass 
+
+    def move_rock(self, dx, dy, walls, player=None):
+        oude_x, oude_y = self.x, self.y
+        self.x += dx
+        self.y += dy
+        self.rect.topleft = (self.x, self.y)
+        
+        hitbox = self.rect.inflate(-4, -4) 
+        for wall in walls:
+            if hitbox.colliderect(wall.rect):
+                self.x, self.y = oude_x, oude_y
+                self.rect.topleft = (self.x, self.y)
+                return False
+        
+        if player and hasattr(player, 'current_doors'):
+            door_rects = [d.rect for d in player.current_doors]
+            for door_rect in door_rects:
+                if self.rect.colliderect(door_rect):
+                    self.x, self.y = oude_x, oude_y
+                    self.rect.topleft = (self.x, self.y)
+                    return False
+        return True
 
 class PressurePlate(Entity):
     def __init__(self, x, y):
-        super().__init__(x, y, 36, 36, (150, 150, 150), speed=0, max_health=999)
+        super().__init__(x, y, 40, 40, (150, 150, 150), speed=0, max_health=999)
         self.is_pressed = False
-        
-        # Plaatje als hij NIET is ingedrukt
-        self.image_up = pygame.Surface((36, 36))
-        self.image_up.fill((100, 100, 100))
-        pygame.draw.rect(self.image_up, (200, 200, 200), (4, 4, 28, 28))
-        
-        # Plaatje als hij WEL is ingedrukt (zakt in de vloer)
-        self.image_down = pygame.Surface((36, 36))
-        self.image_down.fill((80, 80, 80))
-        pygame.draw.rect(self.image_down, (100, 255, 100), (8, 8, 20, 20)) # Groen lampje!
-        
+        self.image_up, self.image_down = None, None
+        try:
+            pad = os.path.join(PNG_DIR, "Different PNG", "plaat_op.png")
+            if os.path.exists(pad):
+                img = pygame.image.load(pad).convert_alpha()
+                self.image_up = pygame.transform.scale(img, (40, 40))
+            else: raise Exception("No PNG")
+        except:
+            self.image_up = pygame.Surface((40, 40), pygame.SRCALPHA)
+            pygame.draw.rect(self.image_up, (80, 80, 80), (0, 0, 40, 40))
+            pygame.draw.rect(self.image_up, (200, 200, 200), (6, 6, 28, 28))
+            
+        try:
+            pad = os.path.join(PNG_DIR, "Different PNG", "plaat_neer.png")
+            if os.path.exists(pad):
+                img = pygame.image.load(pad).convert_alpha()
+                self.image_down = pygame.transform.scale(img, (40, 40))
+            else: raise Exception("No PNG")
+        except:
+            self.image_down = pygame.Surface((40, 40), pygame.SRCALPHA)
+            pygame.draw.rect(self.image_down, (50, 50, 50), (0, 0, 40, 40))
+            pygame.draw.rect(self.image_down, (100, 255, 100), (10, 10, 20, 20)) 
+            pygame.draw.rect(self.image_down, (20, 100, 20), (10, 10, 20, 20), 2)
         self.image = self.image_up
 
-    def update(self, walls=None, player=None):
-        pass # Wordt geregeld in main.py
+    def update(self, walls=None, player=None, entities=None):
+        pass
 
-
-class WhiteOrc(Boss):
-    def __init__(self, x, y, difficulty="Normal"):
-        super().__init__(x, y, difficulty)
+class Torch(Entity):
+    def __init__(self, x, y):
+        super().__init__(x, y, 30, 40, (139, 69, 19), speed=0, max_health=999)
+        self.is_lit = False
         
-        # De Witte Orc is het ultieme kwaad! Dubbel zoveel HP als de Generaal!
-        self.max_health = int(1000 * self.hp_mult)
-        self.health = self.max_health
-        self.speed = 2.0 # Hij is extreem snel
-        self.visual_size = 250 # Gigantisch!
+        self.image_off = pygame.Surface((30, 40), pygame.SRCALPHA)
+        pygame.draw.rect(self.image_off, (100, 50, 20), (10, 10, 10, 30)) 
+        pygame.draw.circle(self.image_off, (50, 50, 50), (15, 10), 8) 
         
-        # We proberen zijn eigen plaatjes in te laden, anders maken we hem wit.
-        self.animations = {'idle': [], 'walk': [], 'attack': [], 'death': []}
-        try:
-            for state in ['idle', 'walk', 'attack', 'death']:
-                i = 0
-                while True:
-                    pad = os.path.join(PNG_DIR, "White Orc PNG", f"white_{state}", f"{i}.png")
-                    if not os.path.exists(pad): break
-                    img = pygame.image.load(pad).convert_alpha()
-                    img = pygame.transform.scale(img, (self.visual_size, self.visual_size))
-                    self.animations[state].append(img)
-                    i += 1
-            if self.animations['idle']: self.image = self.animations['idle'][0]
-        except: 
-            # Fallback: Een gigantisch spierwit, onheilspellend vierkant als je de PNGs nog niet hebt!
-            self.image = pygame.Surface((self.width, self.height))
-            self.image.fill((255, 255, 255)) 
-
-class NPC(Entity):
-    def __init__(self, x, y, level_index=0): 
-        super().__init__(x, y, 40, 40, (128, 0, 128), 0, max_health=100)
-        self.level_index = level_index
-        self.is_talking = False   # Houdt bij of we in gesprek zijn
-        self.dialogue_pages = []  # Alle 'schermen' tekst
-        self.current_page = 0     # Op welk scherm we nu zijn
-        self.has_spoken = False 
-        try:
-            pad = os.path.join(PNG_DIR, "Different PNG", "wizard.png")
-            if os.path.exists(pad):
-                img = pygame.image.load(pad)
-                self.image = pygame.transform.scale(img, (self.width, self.height))
-        except: pass
+        self.image_on = pygame.Surface((30, 40), pygame.SRCALPHA)
+        pygame.draw.rect(self.image_on, (100, 50, 20), (10, 10, 10, 30))
+        pygame.draw.circle(self.image_on, (255, 100, 0), (15, 10), 12) 
+        pygame.draw.circle(self.image_on, (255, 255, 0), (15, 10), 6)  
+        self.image = self.image_off
 
     def update(self, walls=None, player=None):
-        # NIEUW: Als je te ver weg loopt, stopt hij automatisch met praten!
-        if self.is_talking and player:
-            dist = math.hypot(self.x - player.x, self.y - player.y)
-            if dist > 80: 
-                self.is_talking = False
-
-    def interact(self, player):
-        if self.is_talking: return # Als we al praten, doet [E] even niets
-        
-        self.has_spoken = True 
-        self.is_talking = True
-        self.current_page = 0
-        
-        # --- VUL DE DIALOOG PAGINA'S PER LEVEL ---
-        if self.level_index == 0:
-            self.dialogue_pages = [
-                ["Help! Ik zit hier al 60 jaar vast...", "Ik weet dat er meer dan 3 levels zijn,", "maar ik durfde niet verder."],
-                ["In level 3 zit een gruwelijke baas.", "Ik ben gillend weggerend!", "Versla telkens alle monsters om de deur te openen."],
-                ["Dood alle monsters hier om verder te gaan!", "Succes, dappere held..."]
-            ]
-        elif self.level_index == 1:
-            self.dialogue_pages = [
-                ["Pas op, dit is een gevaarlijk doolhof", "vol met dodelijke vallen!"],
-                ["Versla weer alle monsters om door te gaan.", "Ergens hier is een Magisch Zwaard verstopt!", "Zoek het voordat je verder gaat."],
-                ["Vind het Magisch Zwaard en versla", "alle goblins in dit doolhof!"]
-            ]
-        elif self.level_index == 2:
-            self.dialogue_pages = [
-                ["We zijn in de troonzaal!", "Dit is een arena. Je moet", "alle waves zien te overleven."],
-                ["Aan het einde van de waves", "verschijnt de Orc Generaal!", "Maak je klaar voor het gevecht!"],
-                ["Overleef de waves en", "versla de Orc Generaal!"]
-            ]
-        elif self.level_index == 3:
-            self.dialogue_pages = [
-                ["Ongelofelijk... Ik ben nog nooit", "zo diep in de kerker geweest!"],
-                ["Het is hier snikheet in deze", "Vuur-Catacomben.", "Ik weet wel dat hier ergens een Schild ligt!"],
-                ["Zoek het Schild en blijf in leven!"]
-            ]
-        else:
-            self.dialogue_pages = [
-                ["Overleef deze oneindige catacomben", "tot je de Witte Orc vindt..."]
-            ]
-
-    def advance_dialogue(self):
-        """Deze functie wordt aangeroepen als we op SPATIE drukken"""
-        if self.current_page < len(self.dialogue_pages) - 1:
-            self.current_page += 1 # Ga naar het volgende stukje tekst
-        else:
-            self.is_talking = False # We zijn klaar met praten
-
-    def draw(self, surface, camera):
-        super().draw(surface, camera)
-        font = pygame.font.Font(None, 24)
-        font_small = pygame.font.Font(None, 20)
-        
-        # 1. Aandacht trekken als je nog niet gepraat hebt
-        if not self.has_spoken:
-            t = pygame.time.get_ticks()
-            bounce = math.sin(t / 200.0) * 5 
-            text_surf = font.render("Praat met mij [E]!", True, GREEN, BLACK)
-            text_rect = text_surf.get_rect(centerx=self.rect.centerx - camera.x, bottom=self.rect.top - 15 + bounce - camera.y)
-            surface.blit(text_surf, text_rect)
-
-        # 2. Tekst tekenen als we praten
-        if self.is_talking and self.dialogue_pages:
-            huidige_lijst = self.dialogue_pages[self.current_page]
-            
-            for i, regel in enumerate(huidige_lijst):
-                text_surf = font.render(regel, True, YELLOW, BLACK)
-                # +1 omdat de "[SPATIE]" prompt er nog onder moet passen
-                y_offset = (len(huidige_lijst) - i + 1) * 20
-                text_rect = text_surf.get_rect(centerx=self.rect.centerx - camera.x, bottom=self.rect.top - 5 - y_offset - camera.y)
-                surface.blit(text_surf, text_rect)
-                
-            # Teken de prompt om verder te gaan
-            spatie_surf = font_small.render("[SPATIE] Verder", True, (0, 255, 255), BLACK)
-            spatie_rect = spatie_surf.get_rect(centerx=self.rect.centerx - camera.x, bottom=self.rect.top - 10 - camera.y)
-            surface.blit(spatie_surf, spatie_rect)
+        self.image = self.image_on if self.is_lit else self.image_off

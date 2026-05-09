@@ -82,8 +82,8 @@ class FloorTile(pygame.sprite.Sprite):
     def draw(self, surface, camera):
         surface.blit(self.image, (self.rect.x - camera.x, self.rect.y - camera.y))
         
-       
-
+        
+# --- DE ULTIEME EINDBAAS ARENA ---
 WITTE_ORC_ARENA = [
     "C1111111111111111111111111111111111111111111111111111111111C",
     "110000000000000000000000000000000000000000000000000000000011",
@@ -150,4 +150,4 @@ def genereer_random_kerker(breedte=50, hoogte=30, stappen=1500):
         if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 12: 
             grid[ry][rx] = 'B' # 'B' is the Orc Generaal
 
-    return ["".join(rij) for rij in grid]        
+    return ["".join(rij) for rij in grid]
