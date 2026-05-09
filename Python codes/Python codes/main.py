@@ -3,11 +3,18 @@ import pygame
 import sys
 import math
 import random
+import os
 from settings import WIDTH, HEIGHT, FPS, TILE_SIZE, BLACK, WHITE, RED, YELLOW, GREEN
 from camera import Camera
-from entities import Player, Enemy, NPC, Item, Potion, Boss, WhiteOrc, Trap, Fireball, DamageText, PushableRock, PressurePlate, Torch 
+from entities import Player, Enemy, NPC, Item, Potion, Boss, WhiteOrc, Trap, Fireball, DamageText, PushableRock, PressurePlate, Torch
 from level import Tile, FloorTile, genereer_random_kerker
 from level import ALL_LEVELS  
+
+# --- AUDIO PAD OPHALER ---
+# Dit zorgt ervoor dat hij één map omhoog gaat vanuit "Python codes" om je geluiden te vinden
+def get_audio_path(filename):
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, filename)
 
 def load_level(level_index, persistent_player=None, difficulty="Normal"):
     floors, walls, entities = [], [], []
@@ -59,11 +66,13 @@ def load_level(level_index, persistent_player=None, difficulty="Normal"):
     return floors, walls, entities, player, exit_tiles
 
 def check_level_events(current_level_index, current_wave, entities, walls, difficulty):
-    from entities import Enemy, Boss
-    living_enemies = [e for e in entities if isinstance(e, Enemy) and e.health > 0]
-    if len(living_enemies) > 0: return current_wave, walls
+    from entities import Enemy, Boss, WhiteOrc
+    living_enemies = [e for e in entities if isinstance(e, (Enemy, Boss, WhiteOrc)) and e.health > 0]
+    
+    if len(living_enemies) > 0: 
+        return current_wave, walls
 
-    if current_level_index == 2:  
+    if current_level_index == 2:  # LEVEL 3: Troonzaal
         if current_wave == 1:
             current_wave = 2
             spawn_points = [(800, 200), (1000, 200), (1200, 200), (1400, 200), (900, 300), (1100, 300), (1300, 300), (1100, 400)]
@@ -71,13 +80,18 @@ def check_level_events(current_level_index, current_wave, entities, walls, diffi
         elif current_wave == 2:
             current_wave = 3
             entities.append(Boss(1100, 150, difficulty)) 
-        elif current_wave == 3: walls = [w for w in walls if w.tile_type != 'door']
-    else: walls = [w for w in walls if w.tile_type != 'door']
+        elif current_wave == 3: 
+            walls = [w for w in walls if w.tile_type != 'door']
+            
+    elif current_level_index == 3: # LEVEL 4: Kluis (Puzzelkamer)
+        pass 
+        
+    else: 
+        walls = [w for w in walls if w.tile_type != 'door']
         
     return current_wave, walls
 
 def draw_ui(screen, player, current_level_index, current_wave, living_enemies, fonts, entities, difficulty):
-    from entities import Boss, WhiteOrc
     font, font_hud, font_wave = fonts
     
     screen.blit(font.render(f"Level: {current_level_index + 1} | Mode: {difficulty}", True, WHITE), (10, 10))
@@ -190,9 +204,38 @@ def draw_minimap(screen, player, walls, entities, exit_tiles):
     pygame.draw.circle(mm_surf, GREEN, (cx, cy), 4)
     pygame.draw.rect(mm_surf, WHITE, (0, 0, mm_size, mm_size), 2)
     screen.blit(mm_surf, (mm_x, mm_y))
-    
+
 def main():
     pygame.init()
+    pygame.mixer.init() # INITIALISEER AUDIO
+    
+    # --- LAAD MUZIEK ---
+    try:
+        muziek_pad = get_audio_path("DungeonCrawler.mp3")
+        if os.path.exists(muziek_pad):
+            pygame.mixer.music.load(muziek_pad)
+            pygame.mixer.music.set_volume(0.9)
+            pygame.mixer.music.play(-1) # Loop oneindig
+    except Exception as e:
+        print("Achtergrondmuziek kon niet laden:", e)
+
+    # --- LAAD SFX ---
+    sfx = {}
+    bestanden = {
+        "sword": "Sword.wav",
+        "fireball": "Fireball.wav",
+        "goblin": "goblin.wav",
+        "boss": "boss.wav"
+    }
+    for key, filename in bestanden.items():
+        pad = get_audio_path(filename)
+        if os.path.exists(pad):
+            try:
+                sfx[key] = pygame.mixer.Sound(pad)
+                sfx[key].set_volume(0.5)
+            except Exception as e:
+                print(f"Kon {filename} niet inladen: {e}")
+                
     screen = pygame.display.set_mode((WIDTH, HEIGHT)) 
     pygame.display.set_caption("Dungeon Crawler RPG Quest")
     clock = pygame.time.Clock()
@@ -210,7 +253,7 @@ def main():
     selected_diff_idx = 1 
     active_difficulty = "Normal"
 
-    current_level_index, current_wave = 0, 1 
+    current_level_index, current_wave = 3, 1 
     floors, walls, entities, player, exit_tiles = load_level(current_level_index, None, active_difficulty)
 
     game_state = "START"
@@ -226,7 +269,7 @@ def main():
                     elif event.key == pygame.K_DOWN: selected_diff_idx = min(len(difficulties)-1, selected_diff_idx + 1)
                     elif event.key == pygame.K_RETURN: 
                         active_difficulty = difficulties[selected_diff_idx]
-                        current_level_index, current_wave = 0, 1 
+                        current_level_index, current_wave = 3, 1 
                         floors, walls, entities, player, exit_tiles = load_level(current_level_index, None, active_difficulty)
                         game_state = "PLAYING"
                         
@@ -247,59 +290,45 @@ def main():
                         talking_npc = None
                         for e in entities:
                             if isinstance(e, NPC) and getattr(e, 'is_talking', False):
-                                talking_npc = e
-                                break
+                                 talking_npc = e
+                                 break
                         
                         if talking_npc:
                             talking_npc.advance_dialogue()
                         else:
-                            enemies = [e for e in entities if isinstance(e, Enemy)]
-                            health_before = {e: e.health for e in enemies}
-                            player.attack(enemies, walls)
-                            
-                            hit_someone = False
-                            for e in enemies:
-                                dmg = health_before[e] - e.health
-                                if dmg > 0:
-                                    entities.append(DamageText(e.rect.centerx, e.rect.top, f"-{int(dmg)}", YELLOW))
-                                    hit_someone = True
-                                    
-                            if hit_someone: camera.trigger_shake(3, 2)
+                             if "sword" in sfx: sfx["sword"].play() # SPEEL SWORD GELUID
+                             
+                             enemies = [e for e in entities if isinstance(e, Enemy) and e.health > 0]
+                             health_before = {e: e.health for e in enemies}
+                             player.attack(enemies, walls)
+                                
+                             hit_someone = False
+                             for e in enemies:
+                                 dmg = health_before[e] - e.health
+                                 if dmg > 0:
+                                      entities.append(DamageText(e.rect.centerx, e.rect.top, f"-{int(dmg)}", YELLOW))
+                                      hit_someone = True
+                                        
+                             if hit_someone: camera.trigger_shake(3, 2)
                     
                     elif event.key == pygame.K_f and "Vuurboek" in player.inventory:
                         if player.spell_cooldown == 0:
                             entities.append(Fireball(player.x + 15, player.y + 15, player.facing))
+                            if "fireball" in sfx: sfx["fireball"].play() # SPEEL FIREBALL GELUID
                             player.spell_cooldown = 60
                             
                     elif event.key == pygame.K_e:
                         interact_rect = player.rect.inflate(40, 40) 
-                        
-                        pulled_rock = False
-                        for entity in entities:
-                            if isinstance(entity, PushableRock) and interact_rect.colliderect(entity.rect):
-                                pull_dx, pull_dy = 0, 0
-                                if player.facing == 'up': pull_dx, pull_dy = 0, -TILE_SIZE
-                                elif player.facing == 'down': pull_dx, pull_dy = 0, TILE_SIZE
-                                elif player.facing == 'left': pull_dx, pull_dy = -TILE_SIZE, 0
-                                elif player.facing == 'right': pull_dx, pull_dy = TILE_SIZE, 0
-                                
-                                pull_geslaagd = entity.move_rock(pull_dx, pull_dy, walls, player)
-                                if pull_geslaagd:
-                                    camera.trigger_shake(3, 2)
-                                    pulled_rock = True
-                                    break
-                        
-                        if pulled_rock: continue 
-
                         for entity in entities:
                             if entity != player and not isinstance(entity, PushableRock) and interact_rect.colliderect(entity.rect):
-                                if isinstance(entity, (NPC, Item)): entity.interact(player)
-
+                                if isinstance(entity, (NPC, Item)): entity.interact(player)        
+        
         if game_state == "PLAYING":
             
-            # --- FAKKELS LOGICA ---
             torches = [e for e in entities if isinstance(e, Torch)]
             fireballs = [e for e in entities if isinstance(e, Fireball)]
+            rocks = [e for e in entities if isinstance(e, PushableRock)]
+            plates = [e for e in entities if isinstance(e, PressurePlate)]
             
             for torch in torches:
                 if not torch.is_lit:
@@ -309,18 +338,7 @@ def main():
                             fb.is_removable = True 
                             camera.trigger_shake(5, 3)
             
-            if torches and all(t.is_lit for t in torches):
-                if not getattr(torches[0], 'doors_opened', False): 
-                    camera.trigger_shake(15, 10)
-                    walls = [w for w in walls if w.tile_type != 'door']
-                    torches[0].doors_opened = True
-
-            # --- ROTS EN PLAAT LOGICA ---
-            rocks = [e for e in entities if isinstance(e, PushableRock)]
-            plates = [e for e in entities if isinstance(e, PressurePlate)]
-            
             platen_ingedrukt = 0
-            
             for plate in plates:
                 rock_on_plate = False
                 for rock in rocks:
@@ -330,34 +348,27 @@ def main():
                 was_pressed = plate.is_pressed
                 plate.is_pressed = rock_on_plate
                 plate.image = plate.image_down if plate.is_pressed else plate.image_up
+                if plate.is_pressed: platen_ingedrukt += 1
                 
-                if plate.is_pressed:
-                    platen_ingedrukt += 1
-                
-                if plate.is_pressed and not was_pressed: 
-                    camera.trigger_shake(8, 4)
-                elif not plate.is_pressed and was_pressed: 
-                    camera.trigger_shake(4, 2)
+                if plate.is_pressed and not was_pressed: camera.trigger_shake(8, 4)
+                elif not plate.is_pressed and was_pressed: camera.trigger_shake(4, 2)
 
-            if plates:
-                should_open_poort = (platen_ingedrukt == len(plates))
-                poort_is_open = not any(w.tile_type == 'door' for w in walls)
-                
-                if should_open_poort and not poort_is_open:
-                    walls = [w for w in walls if w.tile_type != 'door']
-                    camera.trigger_shake(15, 10)
-                    
-                elif not should_open_poort and poort_is_open:
-                    if player and hasattr(player, 'current_doors'):
-                        for door in player.current_doors:
-                             if door not in walls: walls.append(door)
-                        camera.trigger_shake(10, 8)
-                        
-            if not getattr(player, 'doors_saved', False) and player:
-                player.current_doors = [w for w in walls if w.tile_type == 'door']
-                player.doors_saved = True
+            all_torches_lit = all(t.is_lit for t in torches) if torches else True
+            all_plates_pressed = (platen_ingedrukt == len(plates)) if plates else True
 
-            # --- GAME OVER / WIN CONDITIE ---
+            should_open_poort = all_torches_lit and all_plates_pressed
+            poort_is_open = not any(w.tile_type == 'door' for w in walls)
+            
+            if should_open_poort and not poort_is_open:
+                walls = [w for w in walls if w.tile_type != 'door']
+                camera.trigger_shake(20, 15) 
+                
+            elif not should_open_poort and poort_is_open:
+                if player and hasattr(player, 'current_doors'):
+                    for door in player.current_doors:
+                         if door not in walls: walls.append(door)
+                    camera.trigger_shake(10, 8)
+            
             if player and player.health <= 0: 
                 game_state = "GAMEOVER"
             
@@ -367,17 +378,24 @@ def main():
             else:
                 oude_player_hp = player.health if player else 0
                 for entity in entities:
-                    if isinstance(entity, Player): entity.update(walls, player=None, entities=entities)
-                    else: entity.update(walls, player)
+                    if isinstance(entity, Player): 
+                        entity.update(walls, player=None, entities=entities)
+                    elif isinstance(entity, Enemy):
+                        entity.update(walls, player, entities=entities)
+                    else: 
+                        entity.update(walls, player)
                         
                     if isinstance(entity, Potion) and hasattr(entity, 'spawn_heal_text') and entity.spawn_heal_text:
                         entities.append(DamageText(player.rect.centerx, player.rect.top, "+30", GREEN))
                         entity.spawn_heal_text = False
+                        
                     if isinstance(entity, Boss) or isinstance(entity, WhiteOrc):
                         if hasattr(entity, 'just_spawned') and entity.just_spawned:
                             camera.trigger_shake(45, 15); entity.just_spawned = False
+                            if "boss" in sfx: sfx["boss"].play() # SPEEL BOSS GELUID
                         if hasattr(entity, 'trigger_slam_shake') and entity.trigger_slam_shake:
                             camera.trigger_shake(20, 15); entity.trigger_slam_shake = False
+                            if "boss" in sfx: sfx["boss"].play() # SPEEL BOSS GELUID
                     
                     if isinstance(entity, Fireball):
                         for e in entities:
@@ -388,14 +406,16 @@ def main():
                                 camera.trigger_shake(4, 3)
                                 break 
                 
+                # Als speler schade krijgt
                 if player and player.health < oude_player_hp:
                     dmg = oude_player_hp - player.health
                     entities.append(DamageText(player.rect.centerx, player.rect.top, f"-{int(dmg)}", RED))
                     camera.trigger_shake(8, 6)
+                    if "goblin" in sfx: sfx["goblin"].play() # SPEEL GOBLIN GELUID BIJ SCHADE
                 
                 if player: camera.update(player)
 
-                # --- EXIT DEUR (Nieuw Level) ---
+                # --- EXIT (Nieuw Level) ---
                 if player:
                     for ex in exit_tiles:
                         if player.rect.colliderect(ex.rect):
