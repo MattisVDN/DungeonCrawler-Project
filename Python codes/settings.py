@@ -9,7 +9,7 @@ Created on Mon Mar 16 16:08:46 2026
 WIDTH = 800
 HEIGHT = 600
 FPS = 60
-TILE_SIZE = 50
+TILE_SIZE = 43
 
 # Kleuren
 BLACK = (0, 0, 0)

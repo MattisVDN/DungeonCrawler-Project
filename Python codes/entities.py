@@ -1,42 +1,34 @@
 # -*- coding: utf-8 -*-
-"""
-entities.py (Nu met Vloeiende, Schuine A* Pathfinding!)
-"""
-
 import pygame
 import math
 import os
 import heapq
 from settings import *
+import random 
+
+# --- DE MAGISCHE ROUTENAVIGATIE ---
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PNG_DIR = os.path.join(BASE_DIR, "PNG's")
 
 def get_path(start_tile, goal_tile, walls):
-    """Berekent de slimste route om muren heen (A-Star Algoritme inclusief schuin lopen)"""
     blocked = set((w.rect.x // TILE_SIZE, w.rect.y // TILE_SIZE) for w in walls)
-
     frontier = []
     heapq.heappush(frontier, (0, start_tile))
     came_from = {start_tile: None}
     cost_so_far = {start_tile: 0}
-
-    # 8 Richtingen (inclusief schuin)
     directions = [(0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (-1, -1), (1, -1), (-1, 1)]
 
     while frontier:
         _, current = heapq.heappop(frontier)
-
-        if current == goal_tile:
-            break
+        if current == goal_tile: break
 
         for dx, dy in directions:
             next_node = (current[0] + dx, current[1] + dy)
             if next_node in blocked: continue
             
-            # Voorkom dat ze door een dichte hoek van 2 muren heen proberen te 'snijden'
             if dx != 0 and dy != 0:
-                if (current[0] + dx, current[1]) in blocked or (current[0], current[1] + dy) in blocked:
-                    continue
+                if (current[0] + dx, current[1]) in blocked or (current[0], current[1] + dy) in blocked: continue
 
-            # Schuin lopen kost iets meer energie dan recht lopen
             step_cost = 1.4 if dx != 0 and dy != 0 else 1
             new_cost = cost_so_far[current] + step_cost
             
@@ -48,14 +40,12 @@ def get_path(start_tile, goal_tile, walls):
 
     current = goal_tile
     path = []
-    if current not in came_from:
-        return [] 
+    if current not in came_from: return [] 
     while current != start_tile:
         path.append(current)
         current = came_from[current]
     path.reverse()
     return path
-
 
 class Entity(pygame.sprite.Sprite):
     def __init__(self, x, y, width, height, color, speed, max_health):
@@ -66,7 +56,6 @@ class Entity(pygame.sprite.Sprite):
         self.speed = speed
         self.max_health = max_health
         self.health = max_health
-        
         self.image = pygame.Surface((width, height))
         self.image.fill(color)
         self.rect = self.image.get_rect()
@@ -74,27 +63,20 @@ class Entity(pygame.sprite.Sprite):
         self.attack_timer = 0
 
     def move_and_collide(self, dx, dy, walls):
-        # Horizontale beweging
         if dx != 0:
             self.x += dx
             self.rect.topleft = (self.x, self.y)
             hitbox = self.rect.inflate(-15, -15)
             for wall in walls:
                 if hitbox.colliderect(wall.rect):
-                    self.x -= dx
-                    self.rect.topleft = (self.x, self.y)
-                    break
-                    
-        # Verticale beweging
+                    self.x -= dx; self.rect.topleft = (self.x, self.y); break
         if dy != 0:
             self.y += dy
             self.rect.topleft = (self.x, self.y)
             hitbox = self.rect.inflate(-15, -15)
             for wall in walls:
                 if hitbox.colliderect(wall.rect):
-                    self.y -= dy
-                    self.rect.topleft = (self.x, self.y)
-                    break
+                    self.y -= dy; self.rect.topleft = (self.x, self.y); break
 
     def draw_health_bar(self, surface, camera, offset_y=-12):
         bar_width = self.width
@@ -107,10 +89,8 @@ class Entity(pygame.sprite.Sprite):
 
     def draw(self, surface, camera):
         draw_pos = (self.x - camera.x, self.y - camera.y)
-        if hasattr(self, 'image') and self.image:
-            surface.blit(self.image, draw_pos)
-        else:
-            pygame.draw.rect(surface, self.color, (*draw_pos, self.width, self.height))
+        if hasattr(self, 'image') and self.image: surface.blit(self.image, draw_pos)
+        else: pygame.draw.rect(surface, self.color, (*draw_pos, self.width, self.height))
 
 class Player(Entity):
     def __init__(self, x, y):
@@ -122,13 +102,15 @@ class Player(Entity):
         self.is_moving = False
         self.is_blocking = False
         self.spell_cooldown = 0 
-        
         self.animations = {'up': [], 'down': [], 'left': [], 'right': []}
+        
         try:
             for direction in ['up', 'down', 'left', 'right']:
                 i = 0
-                while os.path.exists(f"{direction}/{i}.png"):
-                    img = pygame.image.load(f"{direction}/{i}.png").convert_alpha()
+                while True:
+                    pad = os.path.join(PNG_DIR, "Movement", direction, f"{i}.png")
+                    if not os.path.exists(pad): break
+                    img = pygame.image.load(pad).convert_alpha()
                     img = pygame.transform.scale(img, (self.width, self.height))
                     self.animations[direction].append(img)
                     i += 1
@@ -137,8 +119,7 @@ class Player(Entity):
         
         self.sword_img = None
         try:
-            huidige_map = os.path.dirname(os.path.abspath(__file__))
-            sword_pad = os.path.join(huidige_map, "sword.png")
+            sword_pad = os.path.join(PNG_DIR, "Different PNG", "sword.png")
             if os.path.exists(sword_pad):
                 img = pygame.image.load(sword_pad).convert_alpha()
                 self.sword_img = pygame.transform.scale(img, (60, 60))
@@ -157,8 +138,7 @@ class Player(Entity):
                 muur_in_de_weg = False
                 for wall in walls:
                     if wall.rect.clipline(self.rect.center, enemy.rect.center):
-                        muur_in_de_weg = True
-                        break 
+                        muur_in_de_weg = True; break 
                 if muur_in_de_weg: continue
                 
                 if "Magisch Zwaard" in self.inventory: enemy.health -= 40
@@ -222,12 +202,10 @@ class Player(Entity):
                 swing_angle = progress * 120 - 60
                 total_angle = base_angle + swing_angle
                 image_rotation = total_angle - 45
-                
                 rotated_sword = pygame.transform.rotate(self.sword_img, image_rotation)
                 distance = 35 
                 offset_x = math.cos(math.radians(total_angle)) * distance
                 offset_y = -math.sin(math.radians(total_angle)) * distance 
-                
                 sword_rect = rotated_sword.get_rect(center=(cx + offset_x, cy + offset_y))
                 surface.blit(rotated_sword, sword_rect)
             else:
@@ -243,24 +221,25 @@ class Enemy(Entity):
     def __init__(self, x, y):
         super().__init__(x, y, 50, 50, RED, 2, max_health=50) 
         self.visual_size = 80 
-        self.patrol_timer = 0
-        self.patrol_direction = 1
         self.attack_cooldown = 0
         self.current_anim_state = 'idle'
         self.frame_index = 0.0
         self.animation_speed = 0.1
         self.facing_right = True
         self.is_removable = False
-        
         self.path = []
         self.path_timer = 0
-        
         self.animations = {'idle': [], 'walk': [], 'attack': [], 'death': []}
+        
         try:
             for state in ['idle', 'walk', 'attack', 'death']:
                 i = 0
-                while os.path.exists(f"goblin_{state}/{i}.png"):
-                    img = pygame.image.load(f"goblin_{state}/{i}.png")
+                while True:
+                    pad = os.path.join(PNG_DIR, "Goblin PNG", f"goblin_{state}", f"{i}.png")
+                    if not os.path.exists(pad):
+                        pad = os.path.join(PNG_DIR, "Goblin PNG", state, f"{i}.png")
+                        if not os.path.exists(pad): break
+                    img = pygame.image.load(pad)
                     img = pygame.transform.scale(img, (self.visual_size, self.visual_size))
                     self.animations[state].append(img)
                     i += 1
@@ -285,13 +264,25 @@ class Enemy(Entity):
         
         is_moving = False
         dist = math.hypot(self.x - player.x, self.y - player.y) if player else 999
-        ai_state = 'chase' if dist < 300 else 'patrol'
+        
+        # --- NIEUW: LINE OF SIGHT (Zichtlijn) ---
+        can_see_player = False
+        if dist < 300: # De speler is dichtbij genoeg
+            can_see_player = True
+            for wall in walls:
+                # Trek een laserstraal tussen monster en speler
+                if wall.rect.clipline(self.rect.center, player.rect.center):
+                    can_see_player = False # Muur in de weg!
+                    break
+                    
+        ai_state = 'chase' if can_see_player else 'patrol'
+     
 
         if ai_state == 'chase' and self.attack_timer == 0:
             is_moving = True
             dx, dy = 0, 0
-            
             self.path_timer += 1
+            
             if self.path_timer >= 30 or not self.path:
                 self.path_timer = 0
                 start_tile = (int(self.rect.centerx // TILE_SIZE), int(self.rect.centery // TILE_SIZE))
@@ -299,26 +290,19 @@ class Enemy(Entity):
                 self.path = get_path(start_tile, goal_tile, walls)
 
             if self.path:
-                # Mik op het MIDDEN van het vakje (zodat ze niet tegen hoekjes schuren)
                 next_tile = self.path[0]
                 target_x = next_tile[0] * TILE_SIZE + (TILE_SIZE // 2) - (self.width // 2)
                 target_y = next_tile[1] * TILE_SIZE + (TILE_SIZE // 2) - (self.height // 2)
-                
-                # --- VLOEIENDE VECTOR BEWEGING (Schuin lopen!) ---
-                dir_x = target_x - self.x
-                dir_y = target_y - self.y
+                dir_x, dir_y = target_x - self.x, target_y - self.y
                 dist_to_target = math.hypot(dir_x, dir_y)
                 
                 if dist_to_target > self.speed:
                     dx = (dir_x / dist_to_target) * self.speed
                     dy = (dir_y / dist_to_target) * self.speed
                     self.facing_right = dx > 0
-                else:
-                    self.path.pop(0) # We zijn op dit vakje, volgende!
+                else: self.path.pop(0)
             else:
-                # Als er geen pad is, gewoon direct naar speler wijzen
-                dir_x = player.x - self.x
-                dir_y = player.y - self.y
+                dir_x, dir_y = player.x - self.x, player.y - self.y
                 dist_to_player = math.hypot(dir_x, dir_y)
                 if dist_to_player > 0:
                     dx = (dir_x / dist_to_player) * self.speed
@@ -344,42 +328,34 @@ class Enemy(Entity):
         if hasattr(self, 'image') and self.image:
             offset_x = (self.visual_size - self.width) // 2
             offset_y = (self.visual_size - self.height) // 2
-            draw_x = self.x - camera.x - offset_x
-            draw_y = self.y - camera.y - offset_y
-            surface.blit(self.image, (draw_x, draw_y))
+            surface.blit(self.image, (self.x - camera.x - offset_x, self.y - camera.y - offset_y))
         else:
-            draw_pos = (self.x - camera.x, self.y - camera.y)
-            pygame.draw.rect(surface, self.color, (*draw_pos, self.width, self.height))
-            
+            pygame.draw.rect(surface, self.color, (self.x - camera.x, self.y - camera.y, self.width, self.height))
         if not self.is_removable and self.health > 0:
             self.draw_health_bar(surface, camera, offset_y=-30) 
-
 
 class Boss(Enemy):
     def __init__(self, x, y):
         super().__init__(x, y)
         self.health = 500  
         self.max_health = 500
-        self.speed = 1.5 # Iets sneller gemaakt!
-        
-        self.width = 70
-        self.height = 70
+        self.speed = 1.5 
+        self.width, self.height = 70, 70
         self.rect = pygame.Rect(x, y, self.width, self.height)
         self.visual_size = 200 
-        
-        self.special_cooldown = 180  
-        self.slam_timer = 0          
-        self.slam_radius = 120       
-        
-        self.just_spawned = True
-        self.trigger_slam_shake = False
-        
+        self.special_cooldown, self.slam_timer, self.slam_radius = 180, 0, 120       
+        self.just_spawned, self.trigger_slam_shake = True, False
         self.animations = {'idle': [], 'walk': [], 'attack': [], 'death': []}
+        
         try:
             for state in ['idle', 'walk', 'attack', 'death']:
                 i = 0
-                while os.path.exists(f"boss_{state}/{i}.png"):
-                    img = pygame.image.load(f"boss_{state}/{i}.png")
+                while True:
+                    pad = os.path.join(PNG_DIR, "Boss PNG", f"boss_{state}", f"{i}.png")
+                    if not os.path.exists(pad):
+                        pad = os.path.join(PNG_DIR, "Boss PNG", state, f"{i}.png")
+                        if not os.path.exists(pad): break
+                    img = pygame.image.load(pad)
                     img = pygame.transform.scale(img, (self.visual_size, self.visual_size))
                     self.animations[state].append(img)
                     i += 1
@@ -400,42 +376,40 @@ class Boss(Enemy):
             return
 
         dist = math.hypot(self.x - player.x, self.y - player.y) if player else 999
-
-        if self.special_cooldown > 0: 
-            self.special_cooldown -= 1
+        if self.special_cooldown > 0: self.special_cooldown -= 1
 
         if dist < self.slam_radius and self.special_cooldown == 0 and self.slam_timer == 0:
-            self.slam_timer = 60 
-            self.special_cooldown = 240 
-            self.current_anim_state = 'attack'
-            self.frame_index = 0.0
+            self.slam_timer = 60; self.special_cooldown = 240; self.current_anim_state = 'attack'; self.frame_index = 0.0
 
         if self.slam_timer > 0:
-            self.slam_timer -= 1
-            self.current_anim_state = 'attack'
-            
+            self.slam_timer -= 1; self.current_anim_state = 'attack'
             if self.animations['attack']:
                 self.frame_index += (self.animation_speed * 0.5) 
                 if self.frame_index >= len(self.animations['attack']): self.frame_index = 0.0
                 self.image = self.animations['attack'][int(self.frame_index)]
                 if not self.facing_right: self.image = pygame.transform.flip(self.image, True, False)
-
             if self.slam_timer == 5: 
                 self.trigger_slam_shake = True  
-                if dist <= self.slam_radius:
-                    player.take_damage(25) 
+                if dist <= self.slam_radius: player.take_damage(25) 
             return 
 
         if self.attack_cooldown > 0: self.attack_cooldown -= 1
         if self.attack_timer > 0: self.attack_timer -= 1
         
         is_moving = False
-        ai_state = 'chase' if dist < 400 else 'patrol'
+        
+        can_see_player = False
+        if dist < 400: 
+            can_see_player = True
+            for wall in walls:
+                if wall.rect.clipline(self.rect.center, player.rect.center):
+                    can_see_player = False 
+                    break
+                    
+        ai_state = 'chase' if can_see_player else 'patrol'
 
         if ai_state == 'chase' and self.attack_timer == 0:
-            is_moving = True
-            dx, dy = 0, 0
-            
+            is_moving = True; dx, dy = 0, 0
             self.path_timer += 1
             if self.path_timer >= 30 or not self.path:
                 self.path_timer = 0
@@ -447,26 +421,21 @@ class Boss(Enemy):
                 next_tile = self.path[0]
                 target_x = next_tile[0] * TILE_SIZE + (TILE_SIZE // 2) - (self.width // 2)
                 target_y = next_tile[1] * TILE_SIZE + (TILE_SIZE // 2) - (self.height // 2)
-                
-                dir_x = target_x - self.x
-                dir_y = target_y - self.y
+                dir_x, dir_y = target_x - self.x, target_y - self.y
                 dist_to_target = math.hypot(dir_x, dir_y)
                 
                 if dist_to_target > self.speed:
                     dx = (dir_x / dist_to_target) * self.speed
                     dy = (dir_y / dist_to_target) * self.speed
                     self.facing_right = dx > 0
-                else:
-                    self.path.pop(0)
+                else: self.path.pop(0)
             else:
-                dir_x = player.x - self.x
-                dir_y = player.y - self.y
+                dir_x, dir_y = player.x - self.x, player.y - self.y
                 dist_to_player = math.hypot(dir_x, dir_y)
                 if dist_to_player > 0:
                     dx = (dir_x / dist_to_player) * self.speed
                     dy = (dir_y / dist_to_player) * self.speed
                     self.facing_right = dx > 0
-            
             self.move_and_collide(dx, dy, walls)
 
         if player and self.rect.colliderect(player.rect) and self.attack_cooldown == 0:
@@ -486,28 +455,23 @@ class Boss(Enemy):
         if self.slam_timer > 0:
             cx = self.x - camera.x + (self.width // 2)
             cy = self.y - camera.y + (self.height // 2)
-            
             progress = 1.0 - (self.slam_timer / 60.0)
             current_radius = int(self.slam_radius * progress)
-            
             warning_surface = pygame.Surface((self.slam_radius*2, self.slam_radius*2), pygame.SRCALPHA)
             pygame.draw.circle(warning_surface, (255, 0, 0, 60), (self.slam_radius, self.slam_radius), self.slam_radius) 
             pygame.draw.circle(warning_surface, (255, 100, 0, 200), (self.slam_radius, self.slam_radius), current_radius, 4) 
-            
             surface.blit(warning_surface, (cx - self.slam_radius, cy - self.slam_radius))
-
         super().draw(surface, camera)
-
 
 class NPC(Entity):
     def __init__(self, x, y):
         super().__init__(x, y, 40, 40, (128, 0, 128), 0, max_health=100)
         self.quest_state = 'start'
-        self.message = ""
-        self.talk_timer = 0 
+        self.message, self.talk_timer = "", 0 
         try:
-            if os.path.exists("wizard.png"):
-                img = pygame.image.load("wizard.png")
+            pad = os.path.join(PNG_DIR, "Different PNG", "wizard.png")
+            if os.path.exists(pad):
+                img = pygame.image.load(pad)
                 self.image = pygame.transform.scale(img, (self.width, self.height))
         except: pass
 
@@ -517,16 +481,15 @@ class NPC(Entity):
     def interact(self, player):
         self.talk_timer = 180 
         if self.quest_state == 'start':
-            self.message = "Goblins bewaken de kist! Versla ze allemaal, pak de sleutel en kom terug!"
+            self.message = "Goblins bewaken de kist! Versla ze allemaal!"
             self.quest_state = 'waiting'
         elif self.quest_state == 'waiting':
             if "Gouden Sleutel" in player.inventory:
-                self.message = "Geweldig! De Uitgang (Bruine Deur) is nu geopend! Succes!"
+                self.message = "Geweldig! De Uitgang is nu geopend! Succes!"
                 player.inventory.remove("Gouden Sleutel")
                 player.inventory.append("Kasteel Toegang") 
                 self.quest_state = 'done'
-            else:
-                self.message = "Versla alle Goblins zodat de kist opent, en breng me de sleutel!"
+            else: self.message = "Versla alle Goblins en breng me de sleutel!"
         elif self.quest_state == 'done':
             self.message = "De uitgang is vrij!"
 
@@ -541,17 +504,17 @@ class NPC(Entity):
 class Item(Entity):
     def __init__(self, x, y, item_name):
         super().__init__(x, y, 50, 50, YELLOW, 0, max_health=1)
-        self.item_name = item_name
-        self.is_picked_up = False
-        self.frames = []
-        self.frame_index = 0.0
-        self.animation_speed = 0.2
-        self.is_opening = False
-        self.is_open = False
+        self.item_name, self.is_picked_up = item_name, False
+        self.frames, self.frame_index, self.animation_speed = [], 0.0, 0.2
+        self.is_opening, self.is_open = False, False
         try:
             i = 0
-            while os.path.exists(f"kist/{i}.png"):
-                img = pygame.image.load(f"kist/{i}.png")
+            while True:
+                pad = os.path.join(PNG_DIR, "Chest PNG", f"kist", f"{i}.png")
+                if not os.path.exists(pad):
+                    pad = os.path.join(PNG_DIR, "Chest PNG", f"{i}.png")
+                    if not os.path.exists(pad): break
+                img = pygame.image.load(pad)
                 img = pygame.transform.scale(img, (self.width, self.height))
                 self.frames.append(img)
                 i += 1
@@ -567,11 +530,9 @@ class Item(Entity):
             self.frame_index += self.animation_speed
             if self.frame_index >= len(self.frames) - 1:
                 self.frame_index = len(self.frames) - 1
-                self.is_opening = False
-                self.is_open = True
+                self.is_opening = False; self.is_open = True
                 if player and not self.is_picked_up:
-                    player.inventory.append(self.item_name)
-                    self.is_picked_up = True
+                    player.inventory.append(self.item_name); self.is_picked_up = True
             if self.frames: self.image = self.frames[int(self.frame_index)]
 
 class Potion(Entity):
@@ -579,60 +540,46 @@ class Potion(Entity):
         super().__init__(x, y, 40, 40, (255, 20, 147), 0, max_health=1)
         self.is_picked_up = False
         try:
-            if os.path.exists("potion.png"):
-                img = pygame.image.load("potion.png")
+            pad = os.path.join(PNG_DIR, "Different PNG", "potion.png")
+            if os.path.exists(pad):
+                img = pygame.image.load(pad)
                 self.image = pygame.transform.scale(img, (self.width, self.height))
         except: pass
 
     def update(self, walls=None, player=None):
         if player and self.rect.colliderect(player.rect) and not self.is_picked_up:
             if player.health < player.max_health:
-                player.health += 30 
-                if player.health > player.max_health: player.health = player.max_health
+                # Bereken hoeveel we echt genezen
+                heal_amount = 30
+                player.health = min(player.max_health, player.health + heal_amount)
+                self.spawn_heal_text = True 
                 self.is_picked_up = True
-
+                
 class Trap(Entity):
     def __init__(self, x, y):
         super().__init__(x, y, 40, 40, (100, 100, 100), 0, max_health=1)
-        self.damage_cooldown = 0
-        self.is_active = True  
-        self.timer = 0         
-        self.switch_time = 90  
-        
+        self.damage_cooldown, self.is_active, self.timer, self.switch_time = 0, True, 0, 90  
         self.image_active = pygame.Surface((40, 40), pygame.SRCALPHA)
         pygame.draw.rect(self.image_active, (60, 60, 60), (0, 0, 40, 40)) 
-        for i in range(4): 
-            pygame.draw.polygon(self.image_active, (200, 0, 0), [(i*10, 40), (i*10+5, 10), (i*10+10, 40)])
-            
+        for i in range(4): pygame.draw.polygon(self.image_active, (200, 0, 0), [(i*10, 40), (i*10+5, 10), (i*10+10, 40)])
         self.image_safe = pygame.Surface((40, 40), pygame.SRCALPHA)
         pygame.draw.rect(self.image_safe, (60, 60, 60), (0, 0, 40, 40)) 
-        for i in range(4): 
-            pygame.draw.circle(self.image_safe, (20, 20, 20), (i*10 + 5, 20), 4)
-
+        for i in range(4): pygame.draw.circle(self.image_safe, (20, 20, 20), (i*10 + 5, 20), 4)
         self.image = self.image_active
 
     def update(self, walls=None, player=None):
         self.timer += 1
         if self.timer >= self.switch_time:
-            self.timer = 0
-            self.is_active = not self.is_active 
-            if self.is_active: self.image = self.image_active
-            else: self.image = self.image_safe
-
-        if self.damage_cooldown > 0:
-            self.damage_cooldown -= 1
-            
-        if self.is_active and player and self.rect.colliderect(player.rect):
-            if self.damage_cooldown == 0:
-                player.take_damage(20)
-                self.damage_cooldown = 60
+            self.timer = 0; self.is_active = not self.is_active 
+            self.image = self.image_active if self.is_active else self.image_safe
+        if self.damage_cooldown > 0: self.damage_cooldown -= 1
+        if self.is_active and player and self.rect.colliderect(player.rect) and self.damage_cooldown == 0:
+            player.take_damage(20); self.damage_cooldown = 60
 
 class Fireball(Entity):
     def __init__(self, x, y, facing):
         super().__init__(x, y, 20, 20, (255, 100, 0), 12, 1) 
-        self.facing = facing
-        self.is_removable = False
-        
+        self.facing, self.is_removable = facing, False
         self.image = pygame.Surface((20, 20), pygame.SRCALPHA)
         pygame.draw.circle(self.image, (255, 69, 0), (10, 10), 10) 
         pygame.draw.circle(self.image, (255, 255, 0), (10, 10), 5)  
@@ -642,10 +589,40 @@ class Fireball(Entity):
         elif self.facing == 'down': self.y += self.speed
         elif self.facing == 'left': self.x -= self.speed
         elif self.facing == 'right': self.x += self.speed
-        
         self.rect.topleft = (self.x, self.y)
-        
         for wall in walls:
-            if self.rect.colliderect(wall.rect):
-                self.is_removable = True
-                return
+            if self.rect.colliderect(wall.rect): self.is_removable = True; return
+
+class DamageText(Entity):
+    def __init__(self, x, y, text, color):
+        super().__init__(x, y, 0, 0, color, 1, 1) # Onzichtbare body
+        self.text = text
+        self.color = color
+        self.timer = 45 # Blijft 0.75 seconde op het scherm (60 FPS * 0.75)
+        self.is_removable = False
+        self.font = pygame.font.Font(None, 36)
+        
+        # Geef het getalletje een kleine random positie zodat meerdere klappen niet overlappen
+        self.x += random.randint(-15, 15)
+        self.y += random.randint(-10, 10)
+
+    def update(self, walls=None, player=None):
+        self.y -= 1.5 # Zweef langzaam omhoog!
+        self.timer -= 1
+        if self.timer <= 0:
+            self.is_removable = True
+
+    def draw(self, surface, camera):
+        text_surf = self.font.render(self.text, True, self.color)
+        outline_surf = self.font.render(self.text, True, (0, 0, 0)) # Zwart randje voor leesbaarheid
+        
+        draw_x = self.x - camera.x
+        draw_y = self.y - camera.y
+        
+        # Teken 4x de zwarte outline
+        for dx, dy in [(-1,-1), (1,-1), (-1,1), (1,1)]:
+            surface.blit(outline_surf, (draw_x + dx, draw_y + dy))
+        
+        # Teken de gekleurde tekst in het midden
+        surface.blit(text_surf, (draw_x, draw_y))
+            
