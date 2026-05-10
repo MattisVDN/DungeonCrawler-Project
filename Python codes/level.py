@@ -18,6 +18,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PNG_DIR = os.path.join(BASE_DIR, "PNG's")
 
 def laad_tegel(bestandsnaam, fallback_kleur):
+    """
+    Probeert een tegel-afbeelding te laden.
+    Als dit mislukt, wordt er een vervangende afbeelding getekend.
+    """
     # We zoeken in "Different PNG", en als vangnet direct in "PNG's"
     pad1 = os.path.join(PNG_DIR, "Different PNG", bestandsnaam)
     pad2 = os.path.join(PNG_DIR, bestandsnaam)
@@ -28,11 +32,42 @@ def laad_tegel(bestandsnaam, fallback_kleur):
     
     if werkend_pad:
         try:
+            # Probeer de afbeelding te laden
             img = pygame.image.load(werkend_pad).convert_alpha()
             return pygame.transform.scale(img, (TILE_SIZE, TILE_SIZE))
         except Exception as e:
+            # Log de fout, maar crash niet
             print(f"Fout bij laden {bestandsnaam}: {e}")
             
+    # --- AANGEPAST FALLBACK SYSTEEM ---
+    # Als de afbeelding ontbreekt, checken we of we een ladder moeten tekenen
+    if bestandsnaam == "exit_door.png":
+        # Maak een doorzichtige surface (pygame.SRCALPHA zorgt voor transparantie)
+        ladder_surf = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        # Gebruik een lichtere houtkleur voor de sporten en polen
+        wood_color = (160, 82, 45) # Sienna (iets lichter dan de fallback kleur)
+        
+        # --- TEKEN HET LADDER PATROON ---
+        # 1. Verticale palen (twee strepen aan de zijkant)
+        pole_width = 4
+        # Linker paal
+        pygame.draw.rect(ladder_surf, wood_color, (6, 0, pole_width, TILE_SIZE))
+        # Rechter paal
+        pygame.draw.rect(ladder_surf, wood_color, (TILE_SIZE - 6 - pole_width, 0, pole_width, TILE_SIZE))
+        
+        # 2. Horizontale sporten (treden)
+        rung_height = 3
+        # Breedte tussen de buitenkanten van de palen
+        rung_width = TILE_SIZE - (2 * 6) 
+        
+        # Eerste sport op y=4, dan elke 9 pixels tot het einde
+        # Dit zorgt voor een regelmatig patroon van treden
+        for y_pos in range(4, TILE_SIZE, 9):
+            pygame.draw.rect(ladder_surf, wood_color, (6, y_pos, rung_width, rung_height))
+            
+        return ladder_surf
+
+    # Voor alle andere ontbrekende afbeeldingen, gebruik de effen kleur
     surf = pygame.Surface((TILE_SIZE, TILE_SIZE))
     surf.fill(fallback_kleur)
     return surf
@@ -56,12 +91,25 @@ class Tile(pygame.sprite.Sprite):
         
         if tile_type == 'dungeon':
             self.image = get_muur()
+            
+        elif tile_type == 'exit_door':
+            # --- TEKEN DE LADDER HIER ---
+            self.image = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+            wood_color = (160, 82, 45) # Mooie lichte houtkleur
+            
+            # Verticale palen
+            pygame.draw.rect(self.image, wood_color, (6, 0, 4, TILE_SIZE))
+            pygame.draw.rect(self.image, wood_color, (TILE_SIZE - 10, 0, 4, TILE_SIZE))
+            
+            # Horizontale sporten
+            for y_pos in range(4, TILE_SIZE, 9):
+                pygame.draw.rect(self.image, wood_color, (6, y_pos, TILE_SIZE - 12, 3))
+                
         else:
             self.color = (100, 100, 100) 
             if tile_type == 'castle': self.color = (150, 150, 150)
             elif tile_type == 'tree': self.color = (34, 139, 34)
             elif tile_type == 'door': self.color = (255, 0, 0)
-            elif tile_type == 'exit_door': self.color = (139, 69, 19)
             
             self.image = pygame.Surface((TILE_SIZE, TILE_SIZE))
             self.image.fill(self.color)
@@ -72,6 +120,8 @@ class Tile(pygame.sprite.Sprite):
     def draw(self, surface, camera):
         surface.blit(self.image, (self.rect.x - camera.x, self.rect.y - camera.y))
 
+
+# --- DEZE WAS WAARSCHIJNLIJK PER ONGELUK VERWIJDERD ---
 class FloorTile(pygame.sprite.Sprite):
     def __init__(self, x, y):
         super().__init__()
@@ -83,20 +133,19 @@ class FloorTile(pygame.sprite.Sprite):
         surface.blit(self.image, (self.rect.x - camera.x, self.rect.y - camera.y))
         
         
-# --- DE ULTIEME EINDBAAS ARENA ---
 WITTE_ORC_ARENA = [
     "C1111111111111111111111111111111111111111111111111111111111C",
-    "110000000000000000000000000000000000000000000000000000000011",
-    "110000000000000000000000000000000000000000000000000000000011",
+    "11H0000000000000000000000000000000000000000000000000000000H11",
+    "110000000000000000H00000000000000000H00000000000000000000011",
     "110000000000S000000000000000000000000000000S0000000000000011",
     "11000000000SSS0000000000000000000000000000SSS000000000000011",
     "110000000000S0000000000000W0000000000000000S0000000000000011",
     "110000000000000000000000000000000000000000000000000000000011",
-    "110000000000000000000000000000000000000000000000000000000011",
-    "110000000000S000000000000000000000000000000S0000000000000011",
+    "1100000000H0000000000000000000000000000000000000000000000011",
+    "110000000000S00000H00000000000000H000000000S0000000000000011",
     "11000000000SSS0000000000000000000000000000SSS000000000000011",
-    "110000000000S0000000000000P0000000000000000S0000000000000011",
-    "110000000000000000000000000000000000000000000000000000000011",
+    "110000000000S0000000000000P0000000000000000S0000H00000000011",
+    "11H0000000000000000000000000000000000000000000000000000000H11",
     "C1111111111111111111111111DD1111111111111111111111111111111C"
 ]
 
