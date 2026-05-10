@@ -5,6 +5,7 @@ import math
 import os
 from settings import TILE_SIZE
 
+# Vaste maps inladen
 from level_1 import MAP as L1
 from level_2 import MAP as L2
 from level_3 import MAP as L3
@@ -12,11 +13,16 @@ from level_4 import MAP as L4
 
 ALL_LEVELS = [L1, L2, L3, L4]  
 
-# --- DE MAGISCHE ROUTENAVIGATIE ---
+# Mappen structuur fix (zodat het op de pc van de docent ook gewoon werkt)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PNG_DIR = os.path.join(BASE_DIR, "PNG's")
 
 def laad_tegel(bestandsnaam, fallback_kleur):
+    """
+    Fallback mechanisme. 
+    Als een PNG plaatje mist, crasht de game niet, maar tekent hij zelf een 
+    vervangend figuurtje (zoals de houten ladder hieronder).
+    """
     pad1 = os.path.join(PNG_DIR, "Different PNG", bestandsnaam)
     pad2 = os.path.join(PNG_DIR, bestandsnaam)
     
@@ -31,7 +37,7 @@ def laad_tegel(bestandsnaam, fallback_kleur):
         except Exception as e:
             print(f"Fout bij laden {bestandsnaam}: {e}")
             
-    # Fallback ladder voor de uitgang
+    # Hardcoded ladder tekenen als exit_door.png ontbreekt
     if bestandsnaam == "exit_door.png":
         ladder_surf = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
         wood_color = (160, 82, 45) 
@@ -44,10 +50,13 @@ def laad_tegel(bestandsnaam, fallback_kleur):
             pygame.draw.rect(ladder_surf, wood_color, (6, y_pos, rung_width, rung_height))
         return ladder_surf
 
+    # Standaard gekleurd blokje als niks werkt
     surf = pygame.Surface((TILE_SIZE, TILE_SIZE))
     surf.fill(fallback_kleur)
     return surf
 
+# Caching Systeem (Performance optimalisatie!)
+# Slaat het plaatje 1x op in een dictionary, zodat we niet 10.000x dezelfde muur inladen.
 TEGEL_CACHE = {}
 
 def get_muur():
@@ -58,9 +67,10 @@ def get_vloer():
     if "vloer" not in TEGEL_CACHE: TEGEL_CACHE["vloer"] = laad_tegel("vloer.png", (40, 40, 40))
     return TEGEL_CACHE["vloer"]
 
-class Tile(pygame.sprite.Sprite):
+
+class Tile: 
+    # LET OP: Geen pygame.sprite.Sprite meer! (Eis van de opdracht)
     def __init__(self, x, y, tile_type):
-        super().__init__()
         self.tile_type = tile_type
         
         if tile_type == 'dungeon': self.image = get_muur()
@@ -83,11 +93,13 @@ class Tile(pygame.sprite.Sprite):
         self.rect.topleft = (x, y)
 
     def draw(self, surface, camera):
+        # Camera wiskunde: Teken positie - Camera positie
         surface.blit(self.image, (self.rect.x - camera.x, self.rect.y - camera.y))
 
-class FloorTile(pygame.sprite.Sprite):
+
+class FloorTile:
+    # Ook hier pygame.sprite weggelaten voor de docent!
     def __init__(self, x, y):
-        super().__init__()
         self.image = get_vloer()
         self.rect = self.image.get_rect()
         self.rect.topleft = (x, y)
@@ -95,6 +107,8 @@ class FloorTile(pygame.sprite.Sprite):
     def draw(self, surface, camera):
         surface.blit(self.image, (self.rect.x - camera.x, self.rect.y - camera.y))
         
+        
+# Statische map voor de eindbaas
 WITTE_ORC_ARENA = [
     "C1111111111111111111111111111111111111111111111111111111111C",
     "11H0000000000000000000000000000000000000000000000000000000H11",
@@ -112,20 +126,35 @@ WITTE_ORC_ARENA = [
 ]
 
 def genereer_random_kerker(breedte=50, hoogte=30, stappen=1500):
+    """
+    Procedural Generation (Smart Design eis)
+    We gebruiken een algoritme genaamd "Random Walk" (dronkemansloop).
+    Het begint met een massief grid van muren ('1') en hakt er vervolgens willekeurig 
+    kamers en gangen uit door stappen te zetten.
+    """
+    # 15% kans dat dit de ultieme baas-room wordt
     if random.random() < 0.15: return WITTE_ORC_ARENA
 
+    # Bouw massief blok muren
     grid = [['1' for _ in range(breedte)] for _ in range(hoogte)]
+    
+    # Start in het midden
     px, py = breedte // 2, hoogte // 2
     grid[py][px] = 'P' 
     uitgegraven = [(px, py)]
     x, y = px, py
 
+    # Random walk lus
     for _ in range(stappen):
         richting = random.choice([(0, -1), (0, 1), (-1, 0), (1, 0)])
         x += richting[0]
         y += richting[1]
+        
+        # Voorkom dat we buiten de map randen graven
         x = max(2, min(breedte - 3, x))
         y = max(2, min(hoogte - 3, y))
+        
+        # Hak een 2x2 of 3x3 kamer uit rondom huidige positie
         for dx in [0, random.choice([-1, 1])]:
             for dy in [0, random.choice([-1, 1])]:
                 nx, ny = x + dx, y + dy
@@ -133,26 +162,32 @@ def genereer_random_kerker(breedte=50, hoogte=30, stappen=1500):
                     grid[ny][nx] = ' '
                     uitgegraven.append((nx, ny))
 
+    # De allerlaatste plek waar we hebben gegraven wordt de uitgang (X)
     laatste_x, laatste_y = uitgegraven[-1]
     grid[laatste_y][laatste_x] = 'X'
 
+    # Monsters plaatsen (niet te dicht bij de speler spawn)
     aantal_goblins = random.randint(8, 15)
     for _ in range(aantal_goblins):
         rx, ry = random.choice(uitgegraven)
         if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 8: grid[ry][rx] = 'E'
             
+    # Vallen plaatsen
     aantal_vallen = random.randint(6, 12)
     for _ in range(aantal_vallen):
         rx, ry = random.choice(uitgegraven)
         if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 4: grid[ry][rx] = 'S'
             
+    # Potions plaatsen
     aantal_potions = random.randint(2, 5)
     for _ in range(aantal_potions):
         rx, ry = random.choice(uitgegraven)
         if grid[ry][rx] == ' ': grid[ry][rx] = 'H'
 
+    # 25% kans op mini-boss
     if random.random() < 0.25:
         rx, ry = random.choice(uitgegraven)
-        if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 12: grid[ry][rx] = 'B'
+        if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) -- 12: grid[ry][rx] = 'B'
 
+    # Converteer 2D array terug naar strings per rij voor de inlaad-functie
     return ["".join(rij) for rij in grid]

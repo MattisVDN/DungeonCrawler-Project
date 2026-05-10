@@ -10,7 +10,7 @@ from entities import Player, Enemy, NPC, Item, Potion, Boss, WhiteOrc, Trap, Fir
 from level import Tile, FloorTile, genereer_random_kerker
 from level import ALL_LEVELS  
 
-# --- DE MAGISCHE ROUTENAVIGATIE (Globaal) ---
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PNG_DIR = os.path.join(BASE_DIR, "PNG's")
 
@@ -67,13 +67,15 @@ def load_level(level_index, persistent_player=None, difficulty="Normal"):
     return floors, walls, entities, player, exit_tiles
 
 def check_level_events(current_level_index, current_wave, entities, walls, difficulty):
+    # Enige taak van deze functie: checken of we waves moeten spawnen in Arena
+    # Deur logica is verplaatst naar de main loop!
     from entities import Enemy, Boss, WhiteOrc
     living_enemies = [e for e in entities if isinstance(e, (Enemy, Boss, WhiteOrc)) and e.health > 0]
     
     if len(living_enemies) > 0: 
         return current_wave, walls
 
-    if current_level_index == 2:  # LEVEL 3: De Troonzaal
+    if current_level_index == 2: 
         if current_wave == 1:
             current_wave = 2
             spawn_points = [(800, 200), (1000, 200), (1200, 200), (1400, 200), (900, 300), (1100, 300), (1300, 300), (1100, 400)]
@@ -81,24 +83,18 @@ def check_level_events(current_level_index, current_wave, entities, walls, diffi
         elif current_wave == 2:
             current_wave = 3
             entities.append(Boss(1100, 150, difficulty)) 
-        elif current_wave == 3: 
-            walls = [w for w in walls if w.tile_type != 'door']
             
-    elif current_level_index == 3: # LEVEL 4: De Grote Kluis 
-        pass # Jouw fix: deuren openen alleen met puzzel!
-        
-    else: 
-        walls = [w for w in walls if w.tile_type != 'door']
-        
     return current_wave, walls
 
 def draw_ui(screen, player, current_level_index, current_wave, living_enemies, fonts, entities, difficulty):
+    # HUD tekenen: texts, inv, en eindbaas balk
     font, font_hud, font_wave = fonts
     
     screen.blit(font.render(f"Level: {current_level_index + 1} | Mode: {difficulty}", True, WHITE), (10, 10))
+    screen.blit(font.render(f"Score: {player.score}", True, (0, 255, 255)), (10, 30)) # Score toegevoegd!
     screen.blit(font.render(f"Goblins: {living_enemies}", True, YELLOW), (10, 50))
     inv_text = f"Loot: {', '.join(player.inventory)}" if player.inventory else "Loot: Niets"
-    screen.blit(font.render(inv_text, True, WHITE), (10, 30))
+    screen.blit(font.render(inv_text, True, WHITE), (10, 70))
     
     start_y = 170 
     screen.blit(font_hud.render("[SPATIE] Slaan / Tekst", True, WHITE), (WIDTH - 150, start_y))
@@ -134,6 +130,7 @@ def draw_ui(screen, player, current_level_index, current_wave, living_enemies, f
                 break
 
 def draw_fog_of_war(screen, player, camera, entities=None):
+    # render donkere map overlay
     fog = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     fog.fill((10, 10, 20, 245)) 
     
@@ -157,7 +154,6 @@ def draw_fog_of_war(screen, player, camera, entities=None):
         
         fog.blit(light, (cx - light_radius, cy - light_radius), special_flags=pygame.BLEND_RGBA_MIN)
         
-        # Jouw extra feature: Torches in de Fog of War!
         if entities:
             for e in entities:
                 if isinstance(e, Torch) and e.is_lit:
@@ -175,6 +171,7 @@ def draw_fog_of_war(screen, player, camera, entities=None):
     screen.blit(fog, (0, 0))
 
 def draw_minimap(screen, player, walls, entities, exit_tiles):
+    # tekent kleine radar map rechtsboven (schaal is * 0.1)
     mm_size = 150
     mm_x = WIDTH - mm_size - 10
     mm_y = 10
@@ -203,15 +200,14 @@ def draw_minimap(screen, player, walls, entities, exit_tiles):
         elif isinstance(e, Item) and not getattr(e, 'is_picked_up', False):
             draw_on_map(e.x, e.y, YELLOW, 2, is_rect=False) 
 
-    pygame.draw.circle(mm_surf, GREEN, (cx, cy), 4)
+    pygame.draw.circle(mm_surf, GREEN, (cx, cy), 4) # jij bent groen bolletje
     pygame.draw.rect(mm_surf, WHITE, (0, 0, mm_size, mm_size), 2)
     screen.blit(mm_surf, (mm_x, mm_y))
     
 def main():
     pygame.init()
-    pygame.mixer.init() # Jouw Audio
+    pygame.mixer.init() 
     
-    # --- LAAD MUZIEK ---
     try:
         muziek_pad = get_audio_path("DungeonCrawler.mp3")
         if os.path.exists(muziek_pad):
@@ -221,7 +217,7 @@ def main():
     except Exception as e:
         print("Achtergrondmuziek kon niet laden:", e)
 
-    # --- LAAD SFX ---
+    # sounds id's in dict gestoken = makkelijk oproepen via sfx["sword"].play()
     sfx = {}
     bestanden = {"sword": "Sword.wav", "fireball": "Fireball.wav", "goblin": "goblin.wav", "boss": "boss.wav"}
     for key, filename in bestanden.items():
@@ -250,7 +246,7 @@ def main():
     selected_diff_idx = 1 
     active_difficulty = "Normal"
 
-    # --- ACHTERGRONDEN INLADEN (Mattis) ---
+    # try-except zorgt dat game niet crasht als een menu bg kwijt is
     menu_bg, win_bg, gameover_bg = None, None, None
     try:
         pad_menu = os.path.join(PNG_DIR, "Different PNG", "menu_bg.png")
@@ -264,23 +260,26 @@ def main():
     except Exception as e:
         print(f"Kon achtergronden niet laden: {e}")
 
-    current_level_index, current_wave = 2, 1 
+    current_level_index, current_wave = 0, 1 
     floors, walls, entities, player, exit_tiles = load_level(current_level_index, None, active_difficulty)
 
     game_state = "START"
     running = True
     
+    #  MAIN GAMELOOP 
     while running:
+        # events (zoals afsluiten op x drukken)
         for event in pygame.event.get():
             if event.type == pygame.QUIT: running = False
             
+            # inputs afhandelen
             if event.type == pygame.KEYDOWN:
                 if game_state == "START":
                     if event.key == pygame.K_UP: selected_diff_idx = max(0, selected_diff_idx - 1)
                     elif event.key == pygame.K_DOWN: selected_diff_idx = min(len(difficulties)-1, selected_diff_idx + 1)
                     elif event.key == pygame.K_RETURN: 
                         active_difficulty = difficulties[selected_diff_idx]
-                        current_level_index, current_wave = 2, 1 
+                        current_level_index, current_wave = 0, 1 
                         floors, walls, entities, player, exit_tiles = load_level(current_level_index, None, active_difficulty)
                         game_state = "PLAYING"
                         
@@ -289,10 +288,22 @@ def main():
                     elif event.key == pygame.K_q: running = False
                     
                 elif game_state in ["GAMEOVER", "WIN"]:
-                    if event.key == pygame.K_r:
-                        current_level_index, current_wave = 0, 1
-                        floors, walls, entities, player, exit_tiles = load_level(current_level_index, None, active_difficulty)
-                        game_state = "PLAYING"
+                    if event.key == pygame.K_r: # restart
+                        if game_state == "GAMEOVER":
+                            # Speler gaat dood  Herstart HUIDIG level
+                            # We geven de oude 'player' mee zodat inventory (zwaarden/schilden) bewaard blijft!
+                            current_wave = 1
+                            if player:
+                                player.health = player.max_health # Genees de speler volledig
+                                player.stamina = player.max_stamina
+                            
+                            floors, walls, entities, player, exit_tiles = load_level(current_level_index, player, active_difficulty)
+                            game_state = "PLAYING"
+                        else:
+                            # Speler wint de game  Begin weer bij level 1 met niks
+                            current_level_index, current_wave = 0, 1
+                            floors, walls, entities, player, exit_tiles = load_level(current_level_index, None, active_difficulty)
+                            game_state = "PLAYING"
                 
                 elif game_state == "PLAYING" and player:
                     if event.key == pygame.K_ESCAPE: game_state = "PAUSED"
@@ -307,7 +318,7 @@ def main():
                         if talking_npc:
                             talking_npc.advance_dialogue()
                         else:
-                            # Jouw dode-monster fix + Mattis's Stamina Systeem!
+                            # Slaan kost stamina
                             if getattr(player, 'stamina', 100) >= 25:
                                 if hasattr(player, 'stamina'): player.stamina -= 25
                                 if "sword" in sfx: sfx["sword"].play()
@@ -334,12 +345,12 @@ def main():
                             player.spell_cooldown = 60
                             
                     elif event.key == pygame.K_e:
+                        from settings import check_botsing # Custom collision
                         interact_rect = player.rect.inflate(40, 40) 
                         
-                        # Mattis's rots-trekken systeem
                         pulled_rock = False
                         for entity in entities:
-                            if isinstance(entity, PushableRock) and interact_rect.colliderect(entity.rect):
+                            if isinstance(entity, PushableRock) and check_botsing(interact_rect, entity.rect):
                                 pull_dx, pull_dy = 0, 0
                                 if player.facing == 'up': pull_dx, pull_dy = 0, -TILE_SIZE
                                 elif player.facing == 'down': pull_dx, pull_dy = 0, TILE_SIZE
@@ -355,12 +366,13 @@ def main():
                         if pulled_rock: continue 
 
                         for entity in entities:
-                            if entity != player and not isinstance(entity, PushableRock) and interact_rect.colliderect(entity.rect):
+                            if entity != player and not isinstance(entity, PushableRock) and check_botsing(interact_rect, entity.rect):
                                 if isinstance(entity, (NPC, Item)): entity.interact(player)
 
+        # UPDATE FASE: game logica uitrekenen
         if game_state == "PLAYING":
             
-            # --- Jouw Complete Puzzel Systeem (Fakkels + Platen) ---
+            #  PUZZEL LOGICA 
             torches = [e for e in entities if isinstance(e, Torch)]
             fireballs = [e for e in entities if isinstance(e, Fireball)]
             rocks = [e for e in entities if isinstance(e, PushableRock)]
@@ -369,6 +381,7 @@ def main():
             for torch in torches:
                 if not torch.is_lit:
                     for fb in fireballs:
+                        # Vuurbal check weggelaten in entities, hier met simpele rect prima
                         if fb.rect.colliderect(torch.rect):
                             torch.is_lit = True
                             fb.is_removable = True 
@@ -389,10 +402,26 @@ def main():
                 if plate.is_pressed and not was_pressed: camera.trigger_shake(8, 4)
                 elif not plate.is_pressed and was_pressed: camera.trigger_shake(4, 2)
 
-            all_torches_lit = all(t.is_lit for t in torches) if torches else True
-            all_plates_pressed = (platen_ingedrukt == len(plates)) if plates else True
 
-            should_open_poort = all_torches_lit and all_plates_pressed
+            # WANNEER MAG DE DEUR OPEN? 
+            living_enemies = [e for e in entities if isinstance(e, (Enemy, Boss, WhiteOrc)) and e.health > 0]
+            has_puzzle = (len(torches) > 0 or len(plates) > 0)
+            
+            if has_puzzle:
+                # Eis 1: Ligt er een puzzel? Dan hoef je ALLEEN de puzzel op te lossen.
+                all_torches_lit = all(t.is_lit for t in torches)
+                all_plates_pressed = (platen_ingedrukt == len(plates))
+                should_open_poort = (all_torches_lit and all_plates_pressed)
+                
+            elif current_level_index == 2:
+                # Eis 2: Arena level? Deur gaat pas open na wave 3 én alles dood.
+                should_open_poort = (current_wave == 3 and len(living_enemies) == 0)
+                
+            else:
+                # Eis 3: Geen puzzel en geen arena? Dan MOET je alle vijanden doden.
+                should_open_poort = (len(living_enemies) == 0)
+
+            # Open/Sluit deuren o.b.v. bovenstaande regels
             poort_is_open = not any(w.tile_type == 'door' for w in walls)
             
             if should_open_poort and not poort_is_open:
@@ -409,6 +438,7 @@ def main():
                 player.current_doors = [w for w in walls if w.tile_type == 'door']
                 player.doors_saved = True
 
+            # Dood of win check
             if player and player.health <= 0: 
                 game_state = "GAMEOVER"
             
@@ -416,13 +446,17 @@ def main():
                 game_state = "WIN"
                 
             else:
+                # POLYMORFISME IN ACTIE: we callen gewoon .update() op elke entity
                 oude_player_hp = player.health if player else 0
                 for entity in entities:
-                    # Jouw Zwerm AI Logica
                     if isinstance(entity, Player): 
                         entity.update(walls, player=None, entities=entities)
                     elif isinstance(entity, Enemy):
                         entity.update(walls, player, entities=entities)
+                        # SCORE UPDATE
+                        if entity.health <= 0 and not getattr(entity, 'score_given', False):
+                            player.score += 50 if not isinstance(entity, Boss) else 500
+                            entity.score_given = True
                     else: 
                         entity.update(walls, player)
                         
@@ -439,7 +473,8 @@ def main():
                     
                     if isinstance(entity, Fireball):
                         for e in entities:
-                            if isinstance(e, Enemy) and e.health > 0 and entity.rect.colliderect(e.rect):
+                            from settings import check_botsing
+                            if isinstance(e, Enemy) and e.health > 0 and check_botsing(entity.rect, e.rect):
                                 e.health -= 30
                                 entities.append(DamageText(e.rect.centerx, e.rect.top, "-30", (255, 100, 0)))
                                 entity.is_removable = True
@@ -454,10 +489,11 @@ def main():
                 
                 if player: camera.update(player)
 
-                # --- EXIT DEUR (Nieuw Level) ---
+                # Nieuw level laden
                 if player:
                     for ex in exit_tiles:
-                        if player.rect.colliderect(ex.rect):
+                        from settings import check_botsing
+                        if check_botsing(player.rect, ex.rect):
                             if current_level_index == 0 and "Gouden Sleutel" not in player.inventory and "Kasteel Toegang" not in player.inventory: 
                                 continue
                                 
@@ -467,10 +503,14 @@ def main():
                             entities.append(DamageText(player.rect.centerx, player.rect.top, "+50 HP BONUS", GREEN))
 
                 current_wave, walls = check_level_events(current_level_index, current_wave, entities, walls, active_difficulty)
+                
+                # dode enemies/items opruimen
                 entities = [e for e in entities if not (hasattr(e, 'is_removable') and e.is_removable)]
                 entities = [e for e in entities if not (hasattr(e, 'is_picked_up') and e.is_picked_up)]
+                # sorteer op Y zodat sprites mooi achter elkaar door lopen (depth sorting)
                 entities.sort(key=lambda e: e.y) 
 
+        # TEKEN FASE 
         screen.fill(BLACK) 
         if game_state == "START":
             if menu_bg:
@@ -493,13 +533,14 @@ def main():
                 screen.blit(sub, (WIDTH // 2 - sub.get_width() // 2, HEIGHT - 50))
      
         elif game_state in ["PLAYING", "PAUSED"]:
+            # layer per layer tekenen ivm overlap
             for floor in floors: floor.draw(screen, camera)
             for ex in exit_tiles: ex.draw(screen, camera)
             for wall in walls: wall.draw(screen, camera)
             for entity in entities: entity.draw(screen, camera)
             
             if player:
-                draw_fog_of_war(screen, player, camera, entities) # Torches included
+                draw_fog_of_war(screen, player, camera, entities)
                 draw_minimap(screen, player, walls, entities, exit_tiles)
                 draw_ui(screen, player, current_level_index, current_wave, len([e for e in entities if isinstance(e, Enemy) and e.health > 0]), (font, font_hud, font_wave), entities, active_difficulty)
             
@@ -542,7 +583,7 @@ def main():
             screen.blit(txt, (WIDTH//2 - txt.get_width()//2, HEIGHT//2 - 50))
             screen.blit(sub, (WIDTH//2 - sub.get_width()//2, HEIGHT//2 + 50))
 
-        pygame.display.flip()
+        pygame.display.flip() # wissel frame buffer
         clock.tick(FPS)
         
     pygame.quit()

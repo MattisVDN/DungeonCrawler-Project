@@ -3,49 +3,62 @@ import pygame
 import math
 import os
 import heapq
-from settings import *
 import random 
 
-# --- DE MAGISCHE ROUTENAVIGATIE ---
+# Nodig voor de opdracht: Abstracte klassen
+from abc import ABC, abstractmethod
+
+# Onze EIGEN collision (geen pygame rects!)
+from settings import WIDTH, HEIGHT, TILE_SIZE, BLACK, WHITE, RED, YELLOW, GREEN, BLUE, check_botsing, check_punt_botsing
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PNG_DIR = os.path.join(BASE_DIR, "PNG's")
 
 def get_path(start_tile, goal_tile, walls):
+    """
+    A-Star (A*) Pathfinding algoritme (Smart Design eis!)
+    Vindt de kortste route over grid om obstakels heen m.b.v g(x) kosten + h(x) heuristiek.
+    """
     blocked = set((w.rect.x // TILE_SIZE, w.rect.y // TILE_SIZE) for w in walls)
     frontier = []
+    # heapq zorgt dat we steeds met de kortste route verder zoeken
     heapq.heappush(frontier, (0, start_tile))
     came_from = {start_tile: None}
     cost_so_far = {start_tile: 0}
+    # (x, y) checken: Boven, Onder, Links, Rechts, + 4x diagonaal
     directions = [(0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (-1, -1), (1, -1), (-1, 1)]
 
     iterations = 0
-    max_iterations = 400 # <--- DE FIX: Maximaal rekenwerk instellen!
+    max_iterations = 400 # Fix: breekt code af als hij geen uitweg kan vinden (tegen lag)
 
     while frontier:
         iterations += 1
-        # Stop met zoeken als het te zwaar wordt, anders bevriest de game!
         if iterations > max_iterations: 
             break 
 
         _, current = heapq.heappop(frontier)
-        if current == goal_tile: break
+        if current == goal_tile: break # Doel geraakt, stop berekening
 
         for dx, dy in directions:
             next_node = (current[0] + dx, current[1] + dy)
             if next_node in blocked: continue
             
+            # Anti hoeken-glitch (check of muren diagonaal blokkeren)
             if dx != 0 and dy != 0:
                 if (current[0] + dx, current[1]) in blocked or (current[0], current[1] + dy) in blocked: continue
 
+            # Wiskunde: Diagonaal lopen is factor wortel 2 (~1.4) afstand, rechte lijn is 1
             step_cost = 1.4 if dx != 0 and dy != 0 else 1
             new_cost = cost_so_far[current] + step_cost
             
             if next_node not in cost_so_far or new_cost < cost_so_far[next_node]:
                 cost_so_far[next_node] = new_cost
+                # Heuristiek: Pythagoras math.hypot (a^2+b^2=c^2)
                 priority = new_cost + math.hypot(goal_tile[0] - next_node[0], goal_tile[1] - next_node[1])
                 heapq.heappush(frontier, (priority, next_node))
                 came_from[next_node] = current
 
+    # Pad omkeren (van Start naar Doel ivm opvragen Array)
     current = goal_tile
     path = []
     if current not in came_from: return [] 
@@ -55,9 +68,10 @@ def get_path(start_tile, goal_tile, walls):
     path.reverse()
     return path
 
-class Entity(pygame.sprite.Sprite):
+
+class Entity(ABC): 
+    # Abstracte hoofdklasse! (Opdracht eis voldaan). Alleen voor overerving, nooit instantiëren.
     def __init__(self, x, y, width, height, color, speed, max_health):
-        super().__init__()
         self.x, self.y = x, y
         self.width, self.height = width, height
         self.color = color
@@ -71,30 +85,33 @@ class Entity(pygame.sprite.Sprite):
         self.attack_timer = 0
 
     def move_and_collide(self, dx, dy, walls, entities=None):
+        # Basis collision functie (eerst stappen, controleren, evt terugzetten)
+        # Hier gebruiken we onze EIGEN wiskunde collision (check_botsing)!
         if dx != 0:
             self.x += dx
             self.rect.topleft = (self.x, self.y)
-            hitbox = self.rect.inflate(-15, -15)
+            hitbox = self.rect.inflate(-15, -15) # Hitbox is ietsje kleiner dan de sprite
             for wall in walls:
-                if hitbox.colliderect(wall.rect):
+                if check_botsing(hitbox, wall.rect):
                     self.x -= dx; self.rect.topleft = (self.x, self.y); break
             if entities:
                 for e in entities:
-                    if isinstance(e, PushableRock) and hitbox.colliderect(e.rect):
+                    if isinstance(e, PushableRock) and check_botsing(hitbox, e.rect):
                         self.x -= dx; self.rect.topleft = (self.x, self.y); break
         if dy != 0:
             self.y += dy
             self.rect.topleft = (self.x, self.y)
             hitbox = self.rect.inflate(-15, -15)
             for wall in walls:
-                if hitbox.colliderect(wall.rect):
+                if check_botsing(hitbox, wall.rect):
                     self.y -= dy; self.rect.topleft = (self.x, self.y); break
             if entities:
                 for e in entities:
-                    if isinstance(e, PushableRock) and hitbox.colliderect(e.rect):
+                    if isinstance(e, PushableRock) and check_botsing(hitbox, e.rect):
                         self.y -= dy; self.rect.topleft = (self.x, self.y); break
 
     def draw_health_bar(self, surface, camera, offset_y=-12):
+        # Levensbalkje berekenen via een simpele ratio (health / max_health)
         bar_width = int(self.width)
         bar_height = 8 
         fill = int(max(0, (self.health / self.max_health) * bar_width))
@@ -109,13 +126,24 @@ class Entity(pygame.sprite.Sprite):
         draw_pos = (self.x - camera.x, self.y - camera.y)
         if hasattr(self, 'image') and self.image: surface.blit(self.image, draw_pos)
         else: pygame.draw.rect(surface, self.color, (*draw_pos, self.width, self.height))
+    
+    @abstractmethod
+    def update(self, walls, player=None, entities=None):
+        """
+        Abstracte methode: Dwingt af dat subklasse (Player, Enemy, Item, etc.) 
+        MOET zijn eigen update-logica schrijven. Hierdoor gaat het nooit fout.
+        """
+        pass
 
 class Player(Entity):
+    # Main player logic: beweging, attacks, inv
     def __init__(self, x, y):
         super().__init__(x, y, 50, 50, BLUE, 5, max_health=100)
         self.inventory = [] 
         
-        # --- MATTIS STAMINA SYSTEEM ---
+        # HIER IS DE SCORE TOEGEVOEGD!
+        self.score = 0
+        
         self.max_stamina = 100
         self.stamina = 100
         
@@ -126,7 +154,6 @@ class Player(Entity):
         self.is_blocking = False
         self.spell_cooldown = 0 
         
-        # --- JOUW DASH VARIABELEN ---
         self.is_dashing = False
         self.dash_timer = 0
         self.dash_cooldown = 0
@@ -157,10 +184,12 @@ class Player(Entity):
         if self.is_blocking or self.is_dashing: return 
         self.attack_timer = 15 
         for enemy in enemies:
+            # checkt met pythagoras of enemy in range is
             dist = math.hypot(self.x - enemy.x, self.y - enemy.y)
             if dist < 90: 
                 muur_in_de_weg = False
                 for wall in walls:
+                    # raycast: loopt er een muur-lijn tussen mij en monster?
                     if wall.rect.clipline(self.rect.center, enemy.rect.center):
                         muur_in_de_weg = True; break 
                 if muur_in_de_weg: continue
@@ -168,6 +197,7 @@ class Player(Entity):
                 if "Magisch Zwaard" in self.inventory: enemy.health -= 40
                 else: enemy.health -= 20
                 
+                # Simpele knockback math
                 if not isinstance(enemy, Boss):
                     old_x, old_y = enemy.x, enemy.y
                     if self.facing == 'left': enemy.x -= 40
@@ -177,7 +207,7 @@ class Player(Entity):
                     
                     enemy.rect.topleft = (enemy.x, enemy.y)
                     for wall in walls:
-                        if enemy.rect.colliderect(wall.rect):
+                        if check_botsing(enemy.rect, wall.rect):
                             enemy.x, enemy.y = old_x, old_y
                             enemy.rect.topleft = (enemy.x, enemy.y)
                             break 
@@ -187,7 +217,7 @@ class Player(Entity):
         if self.spell_cooldown > 0: self.spell_cooldown -= 1
         if self.dash_cooldown > 0: self.dash_cooldown -= 1
         
-        # --- STAMINA HERSTEL ---
+        # Stamina passive regen
         if self.stamina < self.max_stamina:
             self.stamina += 0.6  
             if self.stamina > self.max_stamina: self.stamina = self.max_stamina
@@ -198,6 +228,7 @@ class Player(Entity):
         is_grabbing = False
         grabbed_rock = None
         
+        # E indrukken om objecten (PushableRock) te grijpen
         if keys[pygame.K_e] and entities: 
             check_rect = self.rect.copy()
             if self.facing == 'up': check_rect.y -= 15
@@ -205,11 +236,12 @@ class Player(Entity):
             elif self.facing == 'left': check_rect.x -= 15
             elif self.facing == 'right': check_rect.x += 15
             for e in entities:
-                if isinstance(e, PushableRock) and check_rect.colliderect(e.rect):
+                if isinstance(e, PushableRock) and check_botsing(check_rect, e.rect):
                     is_grabbing = True
                     grabbed_rock = e
                     break
 
+        # Logica als we steen vasthouden (trager lopen)
         if is_grabbing:
             dx, dy = 0, 0
             loopsnelheid = self.speed * 0.6 
@@ -228,7 +260,7 @@ class Player(Entity):
                     self.rect.topleft = (self.x, self.y)
                     hitbox = self.rect.inflate(-15, -15)
                     for w in walls:
-                        if hitbox.colliderect(w.rect):
+                        if check_botsing(hitbox, w.rect):
                             self.x -= dx; self.y -= dy
                             self.rect.topleft = (self.x, self.y)
                             grabbed_rock.move_rock(-dx, -dy, walls, player=self) 
@@ -241,7 +273,7 @@ class Player(Entity):
             self.is_blocking = False
             actuele_speed = self.speed
 
-        # --- JOUW DASH LOGICA OP LINKER CTRL ---
+        # Ontwijken (Dashing)
         if keys[pygame.K_LCTRL] and self.dash_cooldown == 0 and not self.is_blocking and not is_grabbing:
             self.is_dashing = True
             self.dash_timer = 8 
@@ -270,6 +302,7 @@ class Player(Entity):
             elif keys[pygame.K_DOWN] or keys[pygame.K_s]: dy = actuele_speed; self.facing = 'down'; self.is_moving = True
             self.move_and_collide(dx, dy, walls, entities)
 
+        # Loop animatie sprites
         if self.is_moving or self.is_dashing:
             self.frame_index += self.animation_speed
             if self.frame_index >= len(self.animations[self.facing]): self.frame_index = 0.0
@@ -277,7 +310,6 @@ class Player(Entity):
             
         if self.animations[self.facing]: self.image = self.animations[self.facing][int(self.frame_index)]
 
-    # --- MATTIS STAMINA BALK ---
     def draw_stamina_bar(self, surface, camera, offset_y=-4):
         bar_width = self.width
         bar_height = 4
@@ -294,6 +326,7 @@ class Player(Entity):
         draw_rect = self.rect.move(-camera.x, -camera.y)
         cx, cy = draw_rect.center 
         
+        # Richting-schild logica (wiskunde hoeken)
         if self.is_blocking:
             shield_dist = 30
             if self.facing == 'up': p1, p2 = (cx - 25, cy - shield_dist), (cx + 25, cy - shield_dist)
@@ -324,6 +357,7 @@ class Player(Entity):
                 pygame.draw.line(surface, WHITE, (cx, cy), end_pos, 2)  
 
 class Enemy(Entity):
+    # Basis Goblin: Bevat onze State Machine AI en Flocking (Zwerm) logica.
     def __init__(self, x, y, difficulty="Normal"):
         self.difficulty = difficulty
         mults = { "Easy": (0.75, 0.5), "Normal": (1.0, 1.0), "Hard": (1.5, 1.5), "Impossible": (2.5, 3.0) }
@@ -339,7 +373,7 @@ class Enemy(Entity):
         self.facing_right = True
         self.is_removable = False
         
-        # Jouw Zwerm AI Variabelen
+        # State machine triggers
         self.ai_state = 'patrol' 
         self.patrol_target = None
         self.patrol_timer = 0
@@ -384,6 +418,7 @@ class Enemy(Entity):
         is_moving = False
         dist = math.hypot(self.x - player.x, self.y - player.y) if player else 999
         
+        # Line of Sight (Raycast check)
         can_see_player = False
         if dist < 350: 
             can_see_player = True
@@ -392,6 +427,7 @@ class Enemy(Entity):
                     can_see_player = False 
                     break
                     
+        #  DE STATE MACHINE (Eis: Smart Design) 
         if can_see_player:
             self.ai_state = 'chase'
             self.last_known_pos = (player.rect.centerx, player.rect.centery)
@@ -426,6 +462,7 @@ class Enemy(Entity):
                 self.path_timer = 0
                 start_tile = (int(self.rect.centerx // TILE_SIZE), int(self.rect.centery // TILE_SIZE))
                 goal_tile = (int(target_pos[0] // TILE_SIZE), int(target_pos[1] // TILE_SIZE))
+                # Roept onze eigen get_path() functie hierboven op!
                 self.path = get_path(start_tile, goal_tile, walls)
 
             if self.path:
@@ -435,6 +472,7 @@ class Enemy(Entity):
                 dir_x, dir_y = target_x - self.x, target_y - self.y
                 dist_to_target = math.hypot(dir_x, dir_y)
                 
+                # Snelheid verwerken
                 if dist_to_target > current_speed:
                     dx = (dir_x / dist_to_target) * current_speed
                     dy = (dir_y / dist_to_target) * current_speed
@@ -448,7 +486,7 @@ class Enemy(Entity):
                     dy = (dir_y / dist_to_target) * current_speed
                     self.facing_right = dx > 0
             
-            # --- ZWERM LOGICA ---
+            # ZWERM AI (Zorgt dat ze niet op exact 1 pixel stilstaan met elkaar)
             if entities and self.ai_state == 'chase':
                 separation_dx, separation_dy = 0, 0
                 for other in entities:
@@ -467,7 +505,8 @@ class Enemy(Entity):
 
             self.move_and_collide(dx, dy, walls)
 
-        if player and self.rect.colliderect(player.rect) and self.attack_cooldown == 0:
+        # Collision Check voor Goblin aanval
+        if player and check_botsing(self.rect, player.rect) and self.attack_cooldown == 0:
             if not getattr(player, 'is_invincible', False):
                 player.take_damage(int(10 * self.dmg_mult))
             self.attack_timer = 30; self.attack_cooldown = 90; is_moving = False
@@ -494,6 +533,7 @@ class Enemy(Entity):
             self.draw_health_bar(surface, camera, offset_y=-20)
 
 class Boss(Enemy):
+    # Boss is een grote Enemy met charge/slam eigenschappen.
     def __init__(self, x, y, difficulty="Normal"):
         super().__init__(x, y, difficulty) 
         self.max_health = int(500 * self.hp_mult)
@@ -541,6 +581,7 @@ class Boss(Enemy):
         if self.special_cooldown > 0: self.special_cooldown -= 1
         if self.charge_cooldown > 0: self.charge_cooldown -= 1
 
+        # Boss Slam 
         if dist < self.slam_radius and self.special_cooldown == 0 and self.slam_timer == 0 and self.charge_timer == 0 and self.charge_duration == 0:
             self.slam_timer = 60; self.special_cooldown = 240; self.current_anim_state = 'attack'; self.frame_index = 0.0
 
@@ -557,6 +598,7 @@ class Boss(Enemy):
                     player.take_damage(int(25 * self.dmg_mult)) 
             return 
 
+        # Boss Charge (Vector math om recht op speler af te stormen)
         if dist > 150 and dist < 400 and self.charge_cooldown == 0 and self.charge_timer == 0 and self.slam_timer == 0:
             self.charge_timer = 45 
             self.charge_cooldown = 300 
@@ -579,7 +621,7 @@ class Boss(Enemy):
             self.current_anim_state = 'walk'
             self.move_and_collide(self.charge_dx, self.charge_dy, walls)
             
-            if player and self.rect.colliderect(player.rect):
+            if player and check_botsing(self.rect, player.rect):
                 if not getattr(player, 'is_invincible', False):
                     player.take_damage(int(25 * self.dmg_mult))
                 self.trigger_slam_shake = True
@@ -663,7 +705,7 @@ class Boss(Enemy):
 
             self.move_and_collide(dx, dy, walls)
 
-        if player and self.rect.colliderect(player.rect) and self.attack_cooldown == 0:
+        if player and check_botsing(self.rect, player.rect) and self.attack_cooldown == 0:
             if not getattr(player, 'is_invincible', False):
                 player.take_damage(int(15 * self.dmg_mult))
             self.attack_timer = 30; self.attack_cooldown = 90; is_moving = False
@@ -679,6 +721,7 @@ class Boss(Enemy):
             if not self.facing_right: self.image = pygame.transform.flip(self.image, True, False)
 
     def draw(self, surface, camera):
+        # Boss charge visual indicators
         if self.charge_timer > 0:
             cx = self.x - camera.x + (self.width // 2)
             cy = self.y - camera.y + (self.height // 2)
@@ -699,8 +742,8 @@ class Boss(Enemy):
             
         super().draw(surface, camera)
 
-# --- MATTIS Z'N EPISCHE WITTE ORC ---
 class WhiteOrc(Boss):
+    # Eindbaas met extra wiskunde aanval patronen
     def __init__(self, x, y, difficulty="Normal"):
         super().__init__(x, y, difficulty)
         self.max_health = int(2000 * self.hp_mult)
@@ -708,19 +751,17 @@ class WhiteOrc(Boss):
         self.speed = 2.5
         self.visual_size = 250 
         
-        # 1. Jump aanval stats
         self.jump_cooldown = 300
         self.is_jumping = False
         self.jump_timer = 0
         self.jump_target_x = 0
         self.jump_target_y = 0
         
-        # 2. Triangle Slam stats
         self.triangle_cooldown = 450
         self.is_charging_triangle = False
         self.triangle_timer = 0
         self.triangle_range = 300
-        self.triangle_angle = 45
+        self.triangle_angle = 45 # Cone vorm van de aanval
 
         self.animations = {'idle': [], 'walk': [], 'attack': [], 'death': [], 'jump': [], 'sprint': []}
         try:
@@ -760,7 +801,7 @@ class WhiteOrc(Boss):
         if self.jump_cooldown > 0: self.jump_cooldown -= 1
         if self.triangle_cooldown > 0: self.triangle_cooldown -= 1
 
-        # --- AANVAL 1: TRIANGLE SLAM ---
+        # Triangle slam triggert Cone wiskunde
         if self.triangle_cooldown == 0 and dist < 250 and not self.is_jumping and self.slam_timer == 0 and self.charge_duration == 0:
             self.is_charging_triangle = True
             self.triangle_timer = 90 
@@ -776,6 +817,7 @@ class WhiteOrc(Boss):
                 self.is_charging_triangle = False
                 self.trigger_slam_shake = True 
                 
+                # Check of speler zich BINNEN de driehoekshoek (cone) bevindt
                 angle_to_player = math.degrees(math.atan2(player.y - self.y, player.x - self.x))
                 orc_angle = 0 if self.facing_right else 180
                 angle_diff = abs((angle_to_player - orc_angle + 180) % 360 - 180)
@@ -787,7 +829,6 @@ class WhiteOrc(Boss):
             self._animate()
             return
 
-        # --- AANVAL 2: JUMP ATTACK ---
         if self.jump_cooldown == 0 and dist > 150 and dist < 500 and self.slam_timer == 0 and self.charge_duration == 0 and not self.is_charging_triangle:
             self.is_jumping = True
             self.jump_timer = 45 
@@ -801,6 +842,7 @@ class WhiteOrc(Boss):
             self.jump_timer -= 1
             self.current_anim_state = 'jump'
 
+            # Vectorsnelheid: Leg 10% van de afstand naar target per frame af
             dx = (self.jump_target_x - self.x) * 0.1
             dy = (self.jump_target_y - self.y) * 0.1
             self.x += dx
@@ -819,7 +861,6 @@ class WhiteOrc(Boss):
             self._animate()
             return
 
-        # --- AANVAL 3: DASH / SPRINT ---
         if dist > 150 and dist < 400 and self.charge_cooldown == 0 and self.charge_timer == 0 and self.slam_timer == 0 and not self.is_jumping and not self.is_charging_triangle:
             self.charge_timer = 45 
             self.charge_cooldown = 300
@@ -843,7 +884,7 @@ class WhiteOrc(Boss):
             self.current_anim_state = 'sprint' 
             self.move_and_collide(self.charge_dx, self.charge_dy, walls)
 
-            if player and self.rect.colliderect(player.rect):
+            if player and check_botsing(self.rect, player.rect):
                 if not getattr(player, 'is_invincible', False):
                     player.take_damage(int(35 * self.dmg_mult))
                 self.trigger_slam_shake = True
@@ -865,6 +906,7 @@ class WhiteOrc(Boss):
                 self.image = pygame.transform.flip(self.image, True, False)
 
     def draw(self, surface, camera):
+        # Tekent Triangle indicator in rood (Polygon)
         if getattr(self, 'is_charging_triangle', False):
             cx, cy = self.rect.centerx - camera.x, self.rect.centery - camera.y
             orc_angle = 0 if self.facing_right else 180
@@ -881,11 +923,13 @@ class WhiteOrc(Boss):
             pygame.draw.polygon(warn_surf, (255, 0, 0, alpha), [p1, p2, p3])
             surface.blit(warn_surf, (0, 0))
 
+        # Spring illussie
         if getattr(self, 'is_jumping', False):
             shadow_surface = pygame.Surface((60, 20), pygame.SRCALPHA)
             pygame.draw.ellipse(shadow_surface, (0, 0, 0, 100), (0, 0, 60, 20))
             surface.blit(shadow_surface, (self.x - camera.x + (self.width // 2) - 30, self.y - camera.y + self.height - 10))
             
+            # Wiskunde sinus voor de parabool-hoogte
             hoogte_in_lucht = math.sin((self.jump_timer / 45.0) * math.pi) * 120 
             
             if hasattr(self, 'image') and self.image:
@@ -911,7 +955,7 @@ class NPC(Entity):
                 self.image = pygame.transform.scale(img, (self.width, self.height))
         except: pass
 
-    def update(self, walls=None, player=None):
+    def update(self, walls=None, player=None, entities=None):
         if self.is_talking and player:
             dist = math.hypot(self.x - player.x, self.y - player.y)
             if dist > 80: 
@@ -924,6 +968,7 @@ class NPC(Entity):
         self.is_talking = True
         self.current_page = 0
         
+        # Hardcoded quest/hint dialogues
         if self.level_index == 0:
             self.dialogue_pages = [
                 ["Help! Ik zit hier al 60 jaar vast...", "Ik weet dat er meer dan 3 levels zijn,", "maar ik durfde niet verder."],
@@ -964,6 +1009,7 @@ class NPC(Entity):
         font = pygame.font.Font(None, 24)
         font_small = pygame.font.Font(None, 20)
         
+        # Idle interactie tooltip
         if not self.has_spoken:
             t = pygame.time.get_ticks()
             bounce = math.sin(t / 200.0) * 5 
@@ -971,6 +1017,7 @@ class NPC(Entity):
             text_rect = text_surf.get_rect(centerx=self.rect.centerx - camera.x, bottom=self.rect.top - 15 + bounce - camera.y)
             surface.blit(text_surf, text_rect)
 
+        # Dialog Box logica
         if self.is_talking and self.dialogue_pages:
             huidige_lijst = self.dialogue_pages[self.current_page]
             
@@ -993,7 +1040,7 @@ class Item(Entity):
         try:
             i = 0
             while True:
-                pad = os.path.join(PNG_DIR, "Chest PNG", f"kist", f"{i}.png")
+                pad = os.path.join(PNG_DIR, "Chest PNG", "kist", f"{i}.png")
                 if not os.path.exists(pad):
                     pad = os.path.join(PNG_DIR, "Chest PNG", f"{i}.png")
                     if not os.path.exists(pad): break
@@ -1008,12 +1055,14 @@ class Item(Entity):
     def interact(self, player):
         if not self.is_open and not self.is_opening: self.is_opening = True
 
-    def update(self, walls=None, player=None):
+    def update(self, walls=None, player=None, entities=None):
+        # Kist animatie logica
         if self.is_opening:
             self.frame_index += self.animation_speed
             if self.frame_index >= len(self.frames) - 1:
                 self.frame_index = len(self.frames) - 1
                 self.is_opening = False; self.is_open = True
+                # Loot pushen naar speler
                 if player and not self.is_picked_up:
                     player.inventory.append(self.item_name); self.is_picked_up = True
             if self.frames: self.image = self.frames[int(self.frame_index)]
@@ -1029,8 +1078,8 @@ class Potion(Entity):
                 self.image = pygame.transform.scale(img, (self.width, self.height))
         except: pass
 
-    def update(self, walls=None, player=None):
-        if player and self.rect.colliderect(player.rect) and not self.is_picked_up:
+    def update(self, walls=None, player=None, entities=None):
+        if player and check_botsing(self.rect, player.rect) and not self.is_picked_up:
             if player.health < player.max_health:
                 heal_amount = 30
                 player.health = min(player.max_health, player.health + heal_amount)
@@ -1041,16 +1090,21 @@ class Trap(Entity):
     def __init__(self, x, y):
         super().__init__(x, y, 40, 40, (100, 100, 100), 0, max_health=1)
         self.damage_cooldown, self.is_active, self.timer, self.switch_time = 0, True, 0, 90  
+        
+        # Code om Trap te renderen (zonder afb.)
         self.image_active = pygame.Surface((40, 40), pygame.SRCALPHA)
         pygame.draw.rect(self.image_active, (60, 60, 60), (0, 0, 40, 40)) 
         for i in range(4): pygame.draw.polygon(self.image_active, (200, 0, 0), [(i*10, 40), (i*10+5, 10), (i*10+10, 40)])
+        
         self.image_safe = pygame.Surface((40, 40), pygame.SRCALPHA)
         pygame.draw.rect(self.image_safe, (60, 60, 60), (0, 0, 40, 40)) 
         for i in range(4): pygame.draw.circle(self.image_safe, (20, 20, 20), (i*10 + 5, 20), 4)
+        
         self.image = self.image_active
 
-    def update(self, walls=None, player=None):
+    def update(self, walls=None, player=None, entities=None):
         self.timer += 1
+        # Timer switcht de val aan/uit
         if self.timer >= self.switch_time:
             self.timer = 0; self.is_active = not self.is_active 
             self.image = self.image_active if self.is_active else self.image_safe
@@ -1060,11 +1114,12 @@ class Trap(Entity):
         if self.is_active and player:
             trap_hitbox = self.rect.inflate(-20, -20) 
             
-            if trap_hitbox.colliderect(player.rect) and self.damage_cooldown == 0:
+            if check_botsing(trap_hitbox, player.rect) and self.damage_cooldown == 0:
                 if not getattr(player, 'is_invincible', False):
                     player.take_damage(20); self.damage_cooldown = 60
                     
 class Fireball(Entity):
+    # Magic spell van speler
     def __init__(self, x, y, facing):
         super().__init__(x, y, 20, 20, (255, 100, 0), 12, 1) 
         self.facing, self.is_removable = facing, False
@@ -1072,16 +1127,18 @@ class Fireball(Entity):
         pygame.draw.circle(self.image, (255, 69, 0), (10, 10), 10) 
         pygame.draw.circle(self.image, (255, 255, 0), (10, 10), 5)  
 
-    def update(self, walls=None, player=None):
+    def update(self, walls=None, player=None, entities=None):
         if self.facing == 'up': self.y -= self.speed
         elif self.facing == 'down': self.y += self.speed
         elif self.facing == 'left': self.x -= self.speed
         elif self.facing == 'right': self.x += self.speed
         self.rect.topleft = (self.x, self.y)
+        # Check impact muur
         for wall in walls:
-            if self.rect.colliderect(wall.rect): self.is_removable = True; return
+            if check_botsing(self.rect, wall.rect): self.is_removable = True; return
 
 class DamageText(Entity):
+    # Simpele 'floating text' class voor als je wordt geraakt (RPG vibes)
     def __init__(self, x, y, text, color):
         super().__init__(x, y, 0, 0, color, 1, 1) 
         self.text = text
@@ -1092,8 +1149,8 @@ class DamageText(Entity):
         self.x += random.randint(-15, 15)
         self.y += random.randint(-10, 10)
 
-    def update(self, walls=None, player=None):
-        self.y -= 1.5 
+    def update(self, walls=None, player=None, entities=None):
+        self.y -= 1.5 # Gaat langzaam omhoog
         self.timer -= 1
         if self.timer <= 0:
             self.is_removable = True
@@ -1103,6 +1160,7 @@ class DamageText(Entity):
         outline_surf = self.font.render(self.text, True, (0, 0, 0)) 
         draw_x = self.x - camera.x
         draw_y = self.y - camera.y
+        # Outline hack (tekst 4x ietsje verschoven tekenen in zwart)
         for dx, dy in [(-1,-1), (1,-1), (-1,1), (1,1)]:
             surface.blit(outline_surf, (draw_x + dx, draw_y + dy))
         surface.blit(text_surf, (draw_x, draw_y))
@@ -1133,7 +1191,7 @@ class PushableRock(Entity):
         
         hitbox = self.rect.inflate(-4, -4) 
         for wall in walls:
-            if hitbox.colliderect(wall.rect):
+            if check_botsing(hitbox, wall.rect):
                 self.x, self.y = oude_x, oude_y
                 self.rect.topleft = (self.x, self.y)
                 return False
@@ -1141,7 +1199,7 @@ class PushableRock(Entity):
         if player and hasattr(player, 'current_doors'):
             door_rects = [d.rect for d in player.current_doors]
             for door_rect in door_rects:
-                if self.rect.colliderect(door_rect):
+                if check_botsing(self.rect, door_rect):
                     self.x, self.y = oude_x, oude_y
                     self.rect.topleft = (self.x, self.y)
                     return False
@@ -1196,5 +1254,5 @@ class Torch(Entity):
         
         self.image = self.image_off
 
-    def update(self, walls=None, player=None):
+    def update(self, walls=None, player=None, entities=None):
         self.image = self.image_on if self.is_lit else self.image_off
