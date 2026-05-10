@@ -13,16 +13,10 @@ from level_4 import MAP as L4
 ALL_LEVELS = [L1, L2, L3, L4]  
 
 # --- DE MAGISCHE ROUTENAVIGATIE ---
-# Dit vertelt Python: Ga 1 map omhoog uit 'Python codes', en zoek dan de map "PNG's"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PNG_DIR = os.path.join(BASE_DIR, "PNG's")
 
 def laad_tegel(bestandsnaam, fallback_kleur):
-    """
-    Probeert een tegel-afbeelding te laden.
-    Als dit mislukt, wordt er een vervangende afbeelding getekend.
-    """
-    # We zoeken in "Different PNG", en als vangnet direct in "PNG's"
     pad1 = os.path.join(PNG_DIR, "Different PNG", bestandsnaam)
     pad2 = os.path.join(PNG_DIR, bestandsnaam)
     
@@ -32,42 +26,24 @@ def laad_tegel(bestandsnaam, fallback_kleur):
     
     if werkend_pad:
         try:
-            # Probeer de afbeelding te laden
             img = pygame.image.load(werkend_pad).convert_alpha()
             return pygame.transform.scale(img, (TILE_SIZE, TILE_SIZE))
         except Exception as e:
-            # Log de fout, maar crash niet
             print(f"Fout bij laden {bestandsnaam}: {e}")
             
-    # --- AANGEPAST FALLBACK SYSTEEM ---
-    # Als de afbeelding ontbreekt, checken we of we een ladder moeten tekenen
+    # Fallback ladder voor de uitgang
     if bestandsnaam == "exit_door.png":
-        # Maak een doorzichtige surface (pygame.SRCALPHA zorgt voor transparantie)
         ladder_surf = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-        # Gebruik een lichtere houtkleur voor de sporten en polen
-        wood_color = (160, 82, 45) # Sienna (iets lichter dan de fallback kleur)
-        
-        # --- TEKEN HET LADDER PATROON ---
-        # 1. Verticale palen (twee strepen aan de zijkant)
+        wood_color = (160, 82, 45) 
         pole_width = 4
-        # Linker paal
         pygame.draw.rect(ladder_surf, wood_color, (6, 0, pole_width, TILE_SIZE))
-        # Rechter paal
         pygame.draw.rect(ladder_surf, wood_color, (TILE_SIZE - 6 - pole_width, 0, pole_width, TILE_SIZE))
-        
-        # 2. Horizontale sporten (treden)
         rung_height = 3
-        # Breedte tussen de buitenkanten van de palen
         rung_width = TILE_SIZE - (2 * 6) 
-        
-        # Eerste sport op y=4, dan elke 9 pixels tot het einde
-        # Dit zorgt voor een regelmatig patroon van treden
         for y_pos in range(4, TILE_SIZE, 9):
             pygame.draw.rect(ladder_surf, wood_color, (6, y_pos, rung_width, rung_height))
-            
         return ladder_surf
 
-    # Voor alle andere ontbrekende afbeeldingen, gebruik de effen kleur
     surf = pygame.Surface((TILE_SIZE, TILE_SIZE))
     surf.fill(fallback_kleur)
     return surf
@@ -75,13 +51,11 @@ def laad_tegel(bestandsnaam, fallback_kleur):
 TEGEL_CACHE = {}
 
 def get_muur():
-    if "muur" not in TEGEL_CACHE:
-        TEGEL_CACHE["muur"] = laad_tegel("muur.png", (100, 100, 100))
+    if "muur" not in TEGEL_CACHE: TEGEL_CACHE["muur"] = laad_tegel("muur.png", (100, 100, 100))
     return TEGEL_CACHE["muur"]
 
 def get_vloer():
-    if "vloer" not in TEGEL_CACHE:
-        TEGEL_CACHE["vloer"] = laad_tegel("vloer.png", (40, 40, 40))
+    if "vloer" not in TEGEL_CACHE: TEGEL_CACHE["vloer"] = laad_tegel("vloer.png", (40, 40, 40))
     return TEGEL_CACHE["vloer"]
 
 class Tile(pygame.sprite.Sprite):
@@ -89,28 +63,19 @@ class Tile(pygame.sprite.Sprite):
         super().__init__()
         self.tile_type = tile_type
         
-        if tile_type == 'dungeon':
-            self.image = get_muur()
-            
+        if tile_type == 'dungeon': self.image = get_muur()
         elif tile_type == 'exit_door':
-            # --- TEKEN DE LADDER HIER ---
             self.image = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-            wood_color = (160, 82, 45) # Mooie lichte houtkleur
-            
-            # Verticale palen
+            wood_color = (160, 82, 45) 
             pygame.draw.rect(self.image, wood_color, (6, 0, 4, TILE_SIZE))
             pygame.draw.rect(self.image, wood_color, (TILE_SIZE - 10, 0, 4, TILE_SIZE))
-            
-            # Horizontale sporten
             for y_pos in range(4, TILE_SIZE, 9):
                 pygame.draw.rect(self.image, wood_color, (6, y_pos, TILE_SIZE - 12, 3))
-                
         else:
             self.color = (100, 100, 100) 
             if tile_type == 'castle': self.color = (150, 150, 150)
             elif tile_type == 'tree': self.color = (34, 139, 34)
             elif tile_type == 'door': self.color = (255, 0, 0)
-            
             self.image = pygame.Surface((TILE_SIZE, TILE_SIZE))
             self.image.fill(self.color)
             
@@ -120,8 +85,6 @@ class Tile(pygame.sprite.Sprite):
     def draw(self, surface, camera):
         surface.blit(self.image, (self.rect.x - camera.x, self.rect.y - camera.y))
 
-
-# --- DEZE WAS WAARSCHIJNLIJK PER ONGELUK VERWIJDERD ---
 class FloorTile(pygame.sprite.Sprite):
     def __init__(self, x, y):
         super().__init__()
@@ -131,7 +94,6 @@ class FloorTile(pygame.sprite.Sprite):
 
     def draw(self, surface, camera):
         surface.blit(self.image, (self.rect.x - camera.x, self.rect.y - camera.y))
-        
         
 WITTE_ORC_ARENA = [
     "C1111111111111111111111111111111111111111111111111111111111C",
@@ -150,9 +112,7 @@ WITTE_ORC_ARENA = [
 ]
 
 def genereer_random_kerker(breedte=50, hoogte=30, stappen=1500):
-    # 15% KANS DAT DIT DE ULTIEME EINDBAAS MAP IS!
-    if random.random() < 0.15:
-        return WITTE_ORC_ARENA
+    if random.random() < 0.15: return WITTE_ORC_ARENA
 
     grid = [['1' for _ in range(breedte)] for _ in range(hoogte)]
     px, py = breedte // 2, hoogte // 2
@@ -179,24 +139,20 @@ def genereer_random_kerker(breedte=50, hoogte=30, stappen=1500):
     aantal_goblins = random.randint(8, 15)
     for _ in range(aantal_goblins):
         rx, ry = random.choice(uitgegraven)
-        if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 8: 
-            grid[ry][rx] = 'E'
+        if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 8: grid[ry][rx] = 'E'
             
     aantal_vallen = random.randint(6, 12)
     for _ in range(aantal_vallen):
         rx, ry = random.choice(uitgegraven)
-        if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 4: 
-            grid[ry][rx] = 'S'
+        if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 4: grid[ry][rx] = 'S'
             
     aantal_potions = random.randint(2, 5)
     for _ in range(aantal_potions):
         rx, ry = random.choice(uitgegraven)
         if grid[ry][rx] == ' ': grid[ry][rx] = 'H'
 
-    # 25% KANS DAT DE ORC GENERAAL GEWOON RONDLOOPT IN DEZE DUNGEON!
     if random.random() < 0.25:
         rx, ry = random.choice(uitgegraven)
-        if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 12: 
-            grid[ry][rx] = 'B' # 'B' is the Orc Generaal
+        if grid[ry][rx] == ' ' and math.hypot(rx - px, ry - py) > 12: grid[ry][rx] = 'B'
 
     return ["".join(rij) for rij in grid]
